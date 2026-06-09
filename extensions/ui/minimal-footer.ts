@@ -311,6 +311,17 @@ export default function (pi: ExtensionAPI) {
 						? formatUsageSummary(state.snapshot, state.config.codexUsage.windows)
 						: undefined;
 
+					// Calculate latest prompt cache hit rate (CH) from the last assistant message
+					let latestCacheHitRate: string | undefined;
+					for (const entry of ctx.sessionManager.getEntries()) {
+						if (entry.type === "message" && entry.message.role === "assistant") {
+							const promptTokens = entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
+							if (promptTokens > 0 && (entry.message.usage.cacheRead > 0 || entry.message.usage.cacheWrite > 0)) {
+								latestCacheHitRate = `${((entry.message.usage.cacheRead / promptTokens) * 100).toFixed(1)}%`;
+							}
+						}
+					}
+
 					const model = ctx.model?.id ?? "no-model";
 					const thinking = pi.getThinkingLevel();
 					const modelText = thinking === "off" ? model : `${model} ${thinking}`;
@@ -325,6 +336,7 @@ export default function (pi: ExtensionAPI) {
 						? `${branchStyled}${theme.fg("dim", ` · ${gitStatus}`)}`
 						: branchStyled;
 					const contextParts: string[] = [];
+					if (latestCacheHitRate) contextParts.push(theme.fg("dim", `CH${latestCacheHitRate}`));
 					if (state.config.context.showPercent) contextParts.push(theme.fg("dim", context));
 					if (inDumbZone) contextParts.push(theme.fg(dumbZone.color, dumbZone.label));
 					if (usageSummary) contextParts.push(theme.fg("dim", usageSummary));
