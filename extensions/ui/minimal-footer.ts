@@ -332,38 +332,73 @@ export default function (pi: ExtensionAPI) {
 						state.gitCache?.getStatusSnapshot(),
 						state.gitCache?.getPullRequestSnapshot(),
 					);
-					const branchAndGitStyled = gitStatus
-						? `${branchStyled}${theme.fg("dim", ` · ${gitStatus}`)}`
-						: branchStyled;
+					// Repo + branch + git status on the right side
+					const repoAndGitStyled = gitStatus
+						? `${repoStyled}${theme.fg("dim", ` · ${branch}`)}${theme.fg("dim", ` · ${gitStatus}`)}`
+						: branch
+							? `${repoStyled}${theme.fg("dim", ` · ${branch}`)}`
+							: repoStyled;
 					const contextParts: string[] = [];
-					if (latestCacheHitRate) contextParts.push(theme.fg("dim", `CH${latestCacheHitRate}`));
 					if (state.config.context.showPercent) contextParts.push(theme.fg("dim", context));
 					if (inDumbZone) contextParts.push(theme.fg(dumbZone.color, dumbZone.label));
 					if (usageSummary) contextParts.push(theme.fg("dim", usageSummary));
 					const contextStyled = contextParts.join(theme.fg("dim", " · "));
 					const modelStyled = theme.fg("dim", modelText);
+					// Model + CH on the right side
+					const modelAndCHStyled = latestCacheHitRate
+						? `${modelStyled}${theme.fg("dim", ` · CH${latestCacheHitRate}`)}`
+						: modelStyled;
 
 					const renderSplitLine = (left: string, right: string): string => {
 						const gap = " ".repeat(Math.max(2, width - visibleWidth(left) - visibleWidth(right)));
 						return truncateToWidth(left + gap + right, width);
 					};
 
-					const line1Fits = visibleWidth(branchAndGitStyled) + visibleWidth(repoStyled) + 2 <= width;
-					const line2Fits = visibleWidth(contextStyled) + visibleWidth(modelStyled) + 2 <= width;
+					// Get extension statuses from other plugins
+					const extensionStatuses = footerData.getExtensionStatuses();
+					const statusParts: string[] = [];
+					for (const [key, value] of extensionStatuses) {
+						if (value) {
+							// Simplify checkpoint display: "◆ 10 checkpoints" -> "10↩"
+							if (key === "rewind") {
+								const match = value.match(/◆\s*(\d+)\s*checkpoints?/i) || value.match(/(\d+)\s*checkpoints?/i);
+								if (match) {
+									statusParts.push(theme.fg("accent", `${match[1]}↩`));
+								} else {
+									statusParts.push(value);
+								}
+							} else {
+								statusParts.push(value);
+							}
+						}
+					}
+					const statusLine = statusParts.length > 0
+						? statusParts.join(theme.fg("dim", " · "))
+						: undefined;
+
+					// Left side: checkpoints only
+					const leftParts: string[] = [];
+					if (statusLine) leftParts.push(statusLine);
+					const line1Left = leftParts.length > 0
+						? leftParts.join(theme.fg("dim", " · "))
+						: "";
+
+					const line1Fits = visibleWidth(line1Left) + visibleWidth(repoAndGitStyled) + 2 <= width;
+					const line2Fits = visibleWidth(contextStyled) + visibleWidth(modelAndCHStyled) + 2 <= width;
+
+					const lines: string[] = [];
 
 					if (line1Fits && line2Fits) {
-						return [
-							renderSplitLine(branchAndGitStyled, repoStyled),
-							renderSplitLine(contextStyled, modelStyled),
-						];
+						lines.push(renderSplitLine(line1Left, repoAndGitStyled));
+						lines.push(renderSplitLine(contextStyled, modelAndCHStyled));
+					} else {
+						if (line1Left) lines.push(truncateToWidth(line1Left, width));
+						lines.push(truncateToWidth(repoAndGitStyled, width));
+						lines.push(truncateToWidth(contextStyled, width));
+						lines.push(truncateToWidth(modelAndCHStyled, width));
 					}
 
-					return [
-						truncateToWidth(branchAndGitStyled, width),
-						truncateToWidth(repoStyled, width),
-						truncateToWidth(contextStyled, width),
-						truncateToWidth(modelStyled, width),
-					];
+					return lines;
 				},
 			};
 		});

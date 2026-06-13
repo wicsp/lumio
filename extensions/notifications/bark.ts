@@ -1,12 +1,12 @@
 /**
- * Pi brrr Extension
+ * Bark Push Notification Extension
  *
- * Sends a brrr push notification when pi finishes an agent turn and is ready
- * for more input.
+ * Sends a push notification via Bark (or compatible webhook) when pi finishes
+ * an agent turn and is ready for more input.
  *
  * Config files (project overrides global):
- * - ~/.pi/agent/extensions/brrr.json
- * - <cwd>/.pi/brrr.json
+ * - ~/.pi/agent/extensions/bark.json
+ * - <cwd>/.pi/bark.json
  */
 
 import { execFile } from "node:child_process";
@@ -17,7 +17,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@e
 
 const execFileAsync = promisify(execFile);
 
-interface BrrrConfig {
+interface BarkConfig {
 	enabled: boolean;
 	onlyWhenInteractive: boolean;
 	webhook: string;
@@ -30,20 +30,18 @@ interface BrrrConfig {
 	imageUrl: string;
 }
 
-interface BrrrPayload {
+interface BarkPayload {
 	message: string;
 	title?: string;
 	subtitle?: string;
-	expiration_date?: string;
 	sound?: string;
-	open_url?: string;
-	image_url?: string;
+	url?: string;
 }
 
-const DEFAULT_CONFIG: BrrrConfig = {
+const DEFAULT_CONFIG: BarkConfig = {
 	enabled: true,
 	onlyWhenInteractive: true,
-	webhook: "$BRRR_WEBHOOK_URL",
+	webhook: "$BARK_URL",
 	idleSeconds: 20,
 	title: "Pi finished",
 	message: "Pi finished working in '{project}'.",
@@ -53,27 +51,27 @@ const DEFAULT_CONFIG: BrrrConfig = {
 	imageUrl: "",
 };
 
-function readConfigFile(path: string): Partial<BrrrConfig> {
+function readConfigFile(path: string): Partial<BarkConfig> {
 	if (!existsSync(path)) return {};
 
 	try {
-		return JSON.parse(readFileSync(path, "utf-8")) as Partial<BrrrConfig>;
+		return JSON.parse(readFileSync(path, "utf-8")) as Partial<BarkConfig>;
 	} catch (error) {
 		console.error(`Warning: Could not parse ${path}: ${error}`);
 		return {};
 	}
 }
 
-function mergeConfig(base: BrrrConfig, overrides: Partial<BrrrConfig>): BrrrConfig {
+function mergeConfig(base: BarkConfig, overrides: Partial<BarkConfig>): BarkConfig {
 	return {
 		...base,
 		...overrides,
 	};
 }
 
-function loadConfig(cwd: string): BrrrConfig {
-	const globalConfig = readConfigFile(join(getAgentDir(), "extensions", "brrr.json"));
-	const projectConfig = readConfigFile(join(cwd, ".pi", "brrr.json"));
+function loadConfig(cwd: string): BarkConfig {
+	const globalConfig = readConfigFile(join(getAgentDir(), "extensions", "bark.json"));
+	const projectConfig = readConfigFile(join(cwd, ".pi", "bark.json"));
 	return mergeConfig(mergeConfig(DEFAULT_CONFIG, globalConfig), projectConfig);
 }
 
@@ -87,14 +85,10 @@ function resolveWebhook(raw: string): string | undefined {
 	return value;
 }
 
-function isBrrrWebhookUrl(value: string): boolean {
+function isValidWebhookUrl(value: string): boolean {
 	try {
 		const url = new URL(value);
-		return (
-			url.protocol === "https:" &&
-			(url.hostname === "api.brrr.now" || url.hostname === "dev.api.brrr.now") &&
-			/^\/v1\/br_[A-Za-z0-9_]+$/.test(url.pathname)
-		);
+		return url.protocol === "https:" || url.protocol === "http:";
 	} catch {
 		return false;
 	}
@@ -173,18 +167,16 @@ function truncateMessage(value: string): string {
 	return `${trimmed.slice(0, 797).trimEnd()}...`;
 }
 
-async function sendBrrr(webhook: string, payload: BrrrPayload): Promise<{ ok: boolean; error?: string }> {
+async function sendBark(webhook: string, payload: BarkPayload): Promise<{ ok: boolean; error?: string }> {
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), 2_000);
+	const timeout = setTimeout(() => controller.abort(), 5_000);
 
 	try {
-		const body: Record<string, string> = { message: payload.message };
-		if (payload.title) body.title = payload.title;
-		if (payload.subtitle) body.subtitle = payload.subtitle;
-		if (payload.expiration_date) body.expiration_date = payload.expiration_date;
-		if (payload.sound) body.sound = payload.sound;
-		if (payload.open_url) body.open_url = payload.open_url;
-		if (payload.image_url) body.image_url = payload.image_url;
+		const reqBody: Record<string, string> = { body: payload.message };
+		if (payload.title) reqBody.title = payload.title;
+		if (payload.subtitle) reqBody.subtitle = payload.subtitle;
+		if (payload.sound) reqBody.sound = payload.sound;
+		if (payload.url) reqBody.url = payload.url;
 
 		const response = await fetch(webhook, {
 			method: "POST",
@@ -192,11 +184,11 @@ async function sendBrrr(webhook: string, payload: BrrrPayload): Promise<{ ok: bo
 				"content-type": "application/json",
 				accept: "application/json",
 			},
-			body: JSON.stringify(body),
+			body: JSON.stringify(reqBody),
 			signal: controller.signal,
 		});
 
-		if (response.status === 202) return { ok: true };
+		if (response.ok) return { ok: true };
 		return { ok: false, error: `Unexpected response status ${response.status}.` };
 	} catch (error) {
 		return { ok: false, error: error instanceof Error ? error.message : "Unknown webhook failure." };
@@ -209,15 +201,15 @@ function notify(ctx: ExtensionCommandContext, message: string, type: "info" | "w
 	if (ctx.hasUI) ctx.ui.notify(message, type);
 }
 
-function describeConfig(config: BrrrConfig, webhook: string | undefined): string {
-	const webhookStatus = webhook ? (isBrrrWebhookUrl(webhook) ? "configured" : "invalid") : "missing";
+function describeConfig(config: BarkConfig, webhook: string | undefined): string {
+	const webhookStatus = webhook ? (isValidWebhookUrl(webhook) ? "configured" : "invalid") : "missing";
 	const idle = config.idleSeconds === null ? "off" : `${config.idleSeconds}s`;
-	return `brrr is ${config.enabled ? "enabled" : "disabled"}; webhook ${webhookStatus}; idle threshold ${idle}.`;
+	return `bark is ${config.enabled ? "enabled" : "disabled"}; webhook ${webhookStatus}; idle threshold ${idle}.`;
 }
 
-export default function brrrExtension(pi: ExtensionAPI) {
-	pi.registerCommand("brrr", {
-		description: "Show brrr notification status",
+export default function barkExtension(pi: ExtensionAPI) {
+	pi.registerCommand("bark", {
+		description: "Show bark notification status",
 		handler: async (_args, ctx) => {
 			const config = loadConfig(ctx.cwd);
 			notify(ctx, describeConfig(config, resolveWebhook(config.webhook)));
@@ -230,21 +222,20 @@ export default function brrrExtension(pi: ExtensionAPI) {
 		if (config.onlyWhenInteractive && !ctx.hasUI) return;
 
 		const webhook = resolveWebhook(config.webhook);
-		if (!webhook || !isBrrrWebhookUrl(webhook)) return;
+		if (!webhook || !isValidWebhookUrl(webhook)) return;
 		if (await shouldSkipForIdleThreshold(config.idleSeconds)) return;
 
 		const assistantMessage = config.includeLastAssistantMessage ? lastAssistantMessage(event.messages as readonly unknown[]) : undefined;
 		const message = truncateMessage(assistantMessage || formatTemplate(config.message, ctx.cwd));
-		const result = await sendBrrr(webhook, {
+		const result = await sendBark(webhook, {
 			title: formatTemplate(config.title, ctx.cwd),
 			message,
 			sound: config.sound.trim() || undefined,
-			open_url: config.openUrl.trim() || undefined,
-			image_url: config.imageUrl.trim() || undefined,
+			url: config.openUrl.trim() || undefined,
 		});
 
 		if (!result.ok && result.error) {
-			console.error(`brrr notification failed: ${result.error}`);
+			console.error(`bark notification failed: ${result.error}`);
 		}
 	});
 }

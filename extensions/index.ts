@@ -11,24 +11,28 @@ import librarianExtension from "./knowledge/librarian";
 import oracleExtension from "./knowledge/oracle";
 import claudeFastExtension from "./model/claude-fast";
 import openAIFastExtension from "./model/openai-fast";
-import brrrExtension from "./notifications/brrr";
+import barkExtension from "./notifications/bark";
 import notifyExtension from "./notifications/notify";
 import reviewExtension from "./review/review";
 import triageCommentsExtension from "./review/triage-comments";
 import todoExtension from "./todo/todo";
 import registerMinimalFooter from "./ui/minimal-footer";
+import questionnaireExtension from "./ui/questionnaire";
 import registerQuietTools from "./ui/quiet-tools";
 import agentWorkflowAuditExtension from "./workflows/agent-workflow-audit";
+import planModeExtension from "./workflows/plan-mode";
 
 export default function (pi: ExtensionAPI) {
   registerDirtyRepoGuard(pi);
   registerPermissionGate(pi);
   registerMinimalFooter(pi);
   registerQuietTools(pi);
+  planModeExtension(pi);
+  questionnaireExtension(pi);
 
   // Localized Lumio modules, initially imported from @diegopetrucci/pi-extensions and organized by purpose.
   agentWorkflowAuditExtension(pi);
-  brrrExtension(pi);
+  barkExtension(pi);
   confirmDestructiveExtension(pi);
   contextCapExtension(pi);
   contextInspectorExtension(pi);
@@ -50,6 +54,6 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.setStatus("lumio", "loaded");
+    // Lumio loaded
   });
 }
