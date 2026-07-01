@@ -21,6 +21,7 @@ import questionnaireExtension from "./ui/questionnaire";
 import registerQuietTools from "./ui/quiet-tools";
 import agentWorkflowAuditExtension from "./workflows/agent-workflow-audit";
 import planModeExtension from "./workflows/plan-mode";
+import lumioCheckCommand from "./maintenance/lumio-check";
 
 export default function (pi: ExtensionAPI) {
   registerDirtyRepoGuard(pi);
@@ -46,6 +47,7 @@ export default function (pi: ExtensionAPI) {
   reviewExtension(pi);
   todoExtension(pi);
   triageCommentsExtension(pi);
+  lumioCheckCommand(pi);
   pi.registerCommand("lumio", {
     description: "Show Lumio status",
     handler: async (_args, ctx) => {

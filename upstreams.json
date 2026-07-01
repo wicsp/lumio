@@ -1,0 +1,27 @@
+{
+  "comment": "Third-party extension sources that Lumio adapted from. Used by `npm run check` to detect upstream changes.",
+  "sources": [
+    {
+      "id": "diegopetrucci/pi-extensions",
+      "type": "github",
+      "repo": "diegopetrucci/pi-extensions",
+      "reason": "minimal-footer, quiet-tools, and openai-usage were adapted from this package.",
+      "files": [
+        "extensions/ui/minimal-footer.ts",
+        "extensions/ui/quiet-tools.ts",
+        "extensions/ui/openai-usage.ts"
+      ],
+      "lastCheckedRef": "7051e2f4"
+    },
+    {
+      "id": "mitsuhiko/agent-stuff",
+      "type": "github",
+      "repo": "mitsuhiko/agent-stuff",
+      "reason": "review.ts was adapted from agent-stuff/extensions/review.ts (Apache-2.0).",
+      "files": [
+        "extensions/review/review.ts"
+      ],
+      "lastCheckedRef": "f1c881db"
+    }
+  ]
+}

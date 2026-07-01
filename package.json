@@ -9,6 +9,9 @@
     "prompts": ["./prompts"],
     "themes": ["./themes"]
   },
+  "scripts": {
+    "check": "npx tsx scripts/lumio-check.ts"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
