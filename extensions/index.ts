@@ -49,9 +49,9 @@ export default function (pi: ExtensionAPI) {
   triageCommentsExtension(pi);
   lumioCheckCommand(pi);
   pi.registerCommand("lumio", {
-    description: "Show Lumio status",
+    description: "Show Lumio status and version",
     handler: async (_args, ctx) => {
-      ctx.ui.notify("Lumio loaded: guards, minimal footer, and quiet tool previews are active.", "info");
+      ctx.ui.notify("Lumio v0.1.1 loaded: guards, minimal footer, and quiet tool previews are active.", "info");
     },
   });
 
