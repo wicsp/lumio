@@ -44,7 +44,7 @@ lumio/
 把 lumio 注册为 pi 本地 package，之后每次启动 pi 都会自动加载：
 
 ```bash
-pi install /home/wicsp/projects/lumio
+pi install <path-to-lumio>
 ```
 
 安装后重启 pi 即可生效。用 `/lumio` 命令可以确认加载状态。
@@ -64,7 +64,7 @@ pi uninstall lumio
 仅本次会话加载，不写入配置：
 
 ```bash
-pi -e /home/wicsp/projects/lumio
+pi -e <path-to-lumio>
 ```
 
 ## 注册的功能

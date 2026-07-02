@@ -1,5 +1,5 @@
 {
   "piVersion": "0.80.2",
-  "lastChecked": "2026-06-30",
+  "lastChecked": "2026-07-02",
   "comment": "Lumio was verified against this pi version. When pi updates past this version, run `npm run check` to audit compatibility."
 }
