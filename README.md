@@ -37,19 +37,37 @@ lumio/
 └── package.json  # pi package manifest
 ```
 
-## 使用
+## 安装
 
-作为本地 pi package 临时加载：
+### 持久化安装（推荐）
 
-```bash
-pi -e /Users/wicsp/Projects/lumio
-```
-
-或把本项目作为本地 package 加入 pi 配置：
+把 lumio 注册为 pi 本地 package，之后每次启动 pi 都会自动加载：
 
 ```bash
-pi install /Users/wicsp/Projects/lumio
+pi install <path-to-lumio>
 ```
+
+安装后重启 pi 即可生效。用 `/lumio` 命令可以确认加载状态。
+
+### 卸载
+
+```bash
+pi uninstall lumio
+```
+
+### 更新
+
+修改 lumio 代码后无需重新安装——pi 直接从源目录加载。重启 pi 会话即可看到最新改动。
+
+### 临时加载（不持久化）
+
+仅本次会话加载，不写入配置：
+
+```bash
+pi -e <path-to-lumio>
+```
+
+## 注册的功能
 
 当前 extension 会注册：
 
