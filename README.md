@@ -54,15 +54,18 @@ pi install /Users/wicsp/Projects/lumio
 当前 extension 会注册：
 
 - `/lumio`：显示 Lumio 已加载状态。
+- `/fast [on|off|toggle|status]`：按当前 provider 独立控制 Claude/OpenAI Fast mode。
 - `/quiet-tools on|off|toggle|status`：控制折叠状态下的内置工具静默预览。
 - Lumio permission gate：在 `bash` 工具执行前拦截危险命令，必要时请求确认或直接阻止。
 - Lumio dirty repo guard：在有未提交变更时，切换会话或 fork 前请求确认。
 - Lumio minimal footer：替换默认 footer，显示 branch、repo、context、model、thinking level，并在上下文过大时提示 `DUMB ZONE`。
 - Lumio quiet tools：覆盖内置 `bash/read/grep/find/ls/edit/write` 的 TUI renderer，让折叠工具行只显示一行调用和展开提示，不改变模型可见的工具结果。
+- Gnosis、Librarian、Oracle、review、triage、todo、questionnaire 和 workflow audit 等本地工具与命令。
+- Bark 与桌面/终端完成通知。
 
 ## 迁移来源
 
-`minimal-footer` 和 `quiet-tools` 已按 Lumio 原则迁移为本地实现，代码参考自 `@diegopetrucci/pi-extensions`，不再需要把该第三方插件作为运行时依赖加载。
+需要的 `@diegopetrucci/pi-extensions` 功能已按 Lumio 原则拆分、本地化到 `extensions/`，不再把该第三方插件作为运行时依赖。Lumio 不保存 upstream 源码快照；`npm run check` 通过 GitHub compare 和 `upstreams.json` 中的显式路径映射监控相关更新。
 
 ## 维护约定
 

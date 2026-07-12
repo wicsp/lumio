@@ -5,13 +5,53 @@
       "id": "diegopetrucci/pi-extensions",
       "type": "github",
       "repo": "diegopetrucci/pi-extensions",
-      "reason": "minimal-footer, quiet-tools, and openai-usage were adapted from this package.",
+      "reason": "Relevant extensions were localized into Lumio. Updates are monitored remotely through GitHub compare; no upstream source snapshot is stored.",
       "files": [
+        "extensions/workflows/agent-workflow-audit.ts",
+        "extensions/guards/confirm-destructive.ts",
+        "extensions/context/cap.ts",
+        "extensions/context/inspector.ts",
+        "extensions/guards/dirty-repo.ts",
+        "extensions/knowledge/gnosis.ts",
+        "extensions/input/inline-bash.ts",
+        "extensions/knowledge/librarian.ts",
         "extensions/ui/minimal-footer.ts",
+        "extensions/ui/openai-usage.ts",
+        "extensions/notifications/notify.ts",
+        "extensions/model/fast-mode.ts",
+        "extensions/knowledge/oracle.ts",
+        "extensions/guards/permission-gate.ts",
         "extensions/ui/quiet-tools.ts",
-        "extensions/ui/openai-usage.ts"
+        "extensions/review/review.ts",
+        "extensions/todo/todo.ts",
+        "extensions/review/triage-comments.ts",
+        "extensions/notifications/bark.ts"
       ],
-      "lastCheckedRef": "7051e2f4"
+      "pathMappings": {
+        "extensions/agent-workflow-audit/": ["extensions/workflows/agent-workflow-audit.ts"],
+        "extensions/brrr/": ["extensions/notifications/bark.ts"],
+        "extensions/claude-fast/": ["extensions/model/fast-mode.ts"],
+        "extensions/confirm-destructive/": ["extensions/guards/confirm-destructive.ts"],
+        "extensions/context-cap/": ["extensions/context/cap.ts"],
+        "extensions/context-inspector/": ["extensions/context/inspector.ts"],
+        "extensions/dirty-repo-guard/": ["extensions/guards/dirty-repo.ts"],
+        "extensions/gnosis/": ["extensions/knowledge/gnosis.ts"],
+        "extensions/inline-bash/": ["extensions/input/inline-bash.ts"],
+        "extensions/librarian/": ["extensions/knowledge/librarian.ts"],
+        "extensions/minimal-footer/": [
+          "extensions/ui/minimal-footer.ts",
+          "extensions/ui/openai-usage.ts"
+        ],
+        "extensions/notify/": ["extensions/notifications/notify.ts"],
+        "extensions/openai-fast/": ["extensions/model/fast-mode.ts"],
+        "extensions/oracle/": ["extensions/knowledge/oracle.ts"],
+        "extensions/permission-gate/": ["extensions/guards/permission-gate.ts"],
+        "extensions/quiet-tools/": ["extensions/ui/quiet-tools.ts"],
+        "extensions/review/": ["extensions/review/review.ts"],
+        "extensions/todo/": ["extensions/todo/todo.ts"],
+        "extensions/triage-comments/": ["extensions/review/triage-comments.ts"]
+      },
+      "lastCheckedRef": "1f98c6cb"
     },
     {
       "id": "mitsuhiko/agent-stuff",
@@ -21,7 +61,10 @@
       "files": [
         "extensions/review/review.ts"
       ],
-      "lastCheckedRef": "f1c881db"
+      "pathMappings": {
+        "extensions/review.ts": ["extensions/review/review.ts"]
+      },
+      "lastCheckedRef": "c77d4979"
     }
   ]
 }

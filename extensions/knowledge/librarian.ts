@@ -36,6 +36,17 @@ const DEFAULT_CACHE_MODE: CacheMode = "disabled";
 const DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
+const PREFERRED_FAST_MODEL_PATTERNS = [
+	/\bgpt[-_. ]?5\.5(?:[-_. ].*)?\b(?:mini|nano|fast|lite)\b/,
+	/\bgpt[-_. ]?5(?:[-_. ].*)?\b(?:mini|nano|fast|lite)\b/,
+	/\bgpt[-_. ]?4(?:\.1|o)?(?:[-_. ].*)?\b(?:mini|nano)\b/,
+	/\bgemini\b.*\b(?:flash|flash-lite|lite)\b/,
+	/\bclaude\b.*\bhaiku\b/,
+	/\b(?:mistral|codestral)\b.*\b(?:small|mini|lite)\b/,
+];
+
+const HEAVY_MODEL_PATTERN = /\b(?:opus|pro|ultra|max)\b/;
+
 type ToolCall = {
 	id: string;
 	name: string;
@@ -415,8 +426,22 @@ function rankLibrarianModel(model: any): number {
 	let score = modelCostScore(model) * 1_000_000;
 	if (model.reasoning) score += 50;
 	if (/\b(?:mini|nano|haiku|flash|lite|small|fast|instant)\b/.test(text)) score -= 10;
-	if (/\b(?:opus|pro|ultra|max)\b/.test(text)) score += 1_000;
+	if (HEAVY_MODEL_PATTERN.test(text)) score += 1_000;
 	if ((model.contextWindow ?? 0) < 32_000) score += 100;
+	return score;
+}
+
+function isPreferredFastLibrarianModel(model: any): boolean {
+	const text = `${model.provider ?? ""} ${model.id ?? ""} ${model.name ?? ""}`.toLowerCase();
+	if (HEAVY_MODEL_PATTERN.test(text)) return false;
+	return PREFERRED_FAST_MODEL_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function rankPreferredFastLibrarianModel(model: any): number {
+	const text = `${model.provider ?? ""} ${model.id ?? ""} ${model.name ?? ""}`.toLowerCase();
+	let score = rankLibrarianModel(model);
+	const patternIndex = PREFERRED_FAST_MODEL_PATTERNS.findIndex((pattern) => pattern.test(text));
+	if (patternIndex >= 0) score += patternIndex * 100;
 	return score;
 }
 
@@ -486,15 +511,19 @@ async function selectLibrarianModel(
 	}
 
 	const available = await ctx.modelRegistry.getAvailable();
-	const currentProvider = ctx.model?.provider;
-	const sameProvider = currentProvider ? available.filter((model) => model.provider === currentProvider) : [];
-	const candidates = sameProvider.length > 0 ? sameProvider : available;
-	const winner = [...candidates].sort((a, b) => rankLibrarianModel(a) - rankLibrarianModel(b))[0] ?? ctx.model;
+	const preferred = available.filter(isPreferredFastLibrarianModel);
+	const ranked = preferred.length > 0
+		? [...preferred].sort((a, b) => rankPreferredFastLibrarianModel(a) - rankPreferredFastLibrarianModel(b))
+		: [...available].sort((a, b) => rankLibrarianModel(a) - rankLibrarianModel(b));
+	const winner = ranked[0] ?? ctx.model;
 	if (!winner) {
 		throw new Error("No authenticated models are available for Librarian. Log in or configure an API key first.");
 	}
 
 	const fallbackText = normalized ? ` Configured model ${normalized} was unavailable, so Librarian fell back to auto-selection.` : "";
+	const reason = preferred.length > 0
+		? `Selected a preferred fast Librarian model.${fallbackText}`
+		: `Selected the cheapest available model because no preferred fast Librarian model was available.${fallbackText}`;
 	return {
 		model: winner,
 		details: {
@@ -503,7 +532,7 @@ async function selectLibrarianModel(
 			modelId: winner.id,
 			thinkingLevel,
 			autoSelected: true,
-			selectionReason: `Selected the cheapest available model${sameProvider.length > 0 ? " on the current provider" : ""}.${fallbackText}`,
+			selectionReason: reason,
 		},
 	};
 }

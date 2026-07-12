@@ -35,6 +35,7 @@ interface UpstreamSource {
   repo: string;
   reason: string;
   files: string[];
+  pathMappings?: Record<string, string[]>;
   lastCheckedRef: string | null;
 }
 
@@ -56,12 +57,18 @@ interface CompatibilityIssue {
   files: string[];
 }
 
+interface UpstreamChangedFile {
+  path: string;
+  status: "added" | "modified" | "removed" | "renamed";
+}
+
 interface UpstreamUpdate {
   source: UpstreamSource;
   newRef: string;
   newDate: string;
   subject: string;
   commitCount: number;
+  changedFiles: UpstreamChangedFile[];
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -281,6 +288,35 @@ function crossReferenceBreakingChanges(
 
 // ── Upstream check ─────────────────────────────────────────────────
 
+function getChangedFiles(source: UpstreamSource, baseRef: string, headRef: string): UpstreamChangedFile[] {
+  const output = cmd(
+    `gh api "repos/${source.repo}/compare/${baseRef}...${headRef}" --jq '.files[]? | {path: .filename, status: .status}' 2>/dev/null`,
+  );
+  if (!output) return [];
+
+  const files: UpstreamChangedFile[] = [];
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as UpstreamChangedFile;
+      files.push(parsed);
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return files;
+}
+
+/** Map a remote upstream path to one or more localized Lumio files. */
+function mapUpstreamPathToLumio(upstreamPath: string, source: UpstreamSource): string[] {
+  const matchingPrefix = Object.keys(source.pathMappings ?? {})
+    .filter((prefix) => upstreamPath.startsWith(prefix))
+    .sort((a, b) => b.length - a.length)[0];
+  if (matchingPrefix) return source.pathMappings?.[matchingPrefix] ?? [];
+  return source.files.includes(upstreamPath) ? [upstreamPath] : [];
+}
+
 function checkUpstream(source: UpstreamSource): UpstreamUpdate | null {
   const repoUrl = `https://github.com/${source.repo}.git`;
 
@@ -311,11 +347,11 @@ function checkUpstream(source: UpstreamSource): UpstreamUpdate | null {
   let commitCount = 0;
   let subject = "";
   let newDate = "";
+  let changedFiles: UpstreamChangedFile[] = [];
 
   if (source.lastCheckedRef) {
     // Count commits between last checked and current
     const logOutput = cmd(
-      `git ls-remote "${repoUrl}" 2>/dev/null && ` +
       `gh api "repos/${source.repo}/compare/${source.lastCheckedRef}...${mainRef.sha.slice(0, 8)}" --jq ".total_commits, .commits[0].commit.message, .commits[0].commit.committer.date" 2>/dev/null`,
     );
     const lines = logOutput.split("\n").filter(Boolean);
@@ -323,6 +359,7 @@ function checkUpstream(source: UpstreamSource): UpstreamUpdate | null {
     if (commitCount > 0) {
       subject = (lines[1] ?? "").split("\n")[0]?.trim() ?? "";
       newDate = lines[2] ?? "";
+      changedFiles = getChangedFiles(source, source.lastCheckedRef, mainRef.sha.slice(0, 8));
     }
   } else {
     // First check: just get the latest commit
@@ -341,6 +378,7 @@ function checkUpstream(source: UpstreamSource): UpstreamUpdate | null {
     newDate,
     subject,
     commitCount,
+    changedFiles,
   };
 }
 
@@ -441,6 +479,36 @@ async function main(): Promise<void> {
     } else {
       console.log(`      🔄 ${update.commitCount} new commit(s) since ${source.lastCheckedRef.slice(0,8)}`);
       console.log(`      Latest: ${update.newRef} (${update.newDate}) — "${update.subject}"`);
+
+      // Show changed files and cross-reference with Lumio
+      if (update.changedFiles.length > 0) {
+        const extChanged = update.changedFiles.filter((f) =>
+          f.path.startsWith("extensions/"),
+        );
+        if (extChanged.length > 0) {
+          console.log(`      Changed extension files in upstream:`);
+          for (const f of extChanged) {
+            const lumioFiles = mapUpstreamPathToLumio(f.path, source);
+            if (lumioFiles.length > 0) {
+              console.log(`        📄 ${f.path} (${f.status}) → Lumio: ${lumioFiles.join(", ")}`);
+            } else {
+              console.log(`        📄 ${f.path} (${f.status})`);
+            }
+          }
+        }
+        // Summarize non-extension files
+        const otherChanged = update.changedFiles.filter((f) =>
+          !f.path.startsWith("extensions/"),
+        );
+        if (otherChanged.length > 0 && otherChanged.length <= 10) {
+          console.log(`      Other changed files:`);
+          for (const f of otherChanged) {
+            console.log(`        ${f.status === "added" ? "+" : f.status === "removed" ? "-" : "~"} ${f.path}`);
+          }
+        } else if (otherChanged.length > 10) {
+          console.log(`      + ${otherChanged.length} other files changed (non-extension).`);
+        }
+      }
     }
 
     // Update the last checked ref
