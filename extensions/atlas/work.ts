@@ -181,11 +181,15 @@ export function startWorkPoller(
 		return result.ok;
 	}
 
-	async function reportComplete(runId: string, output: Record<string, unknown>): Promise<boolean> {
+	async function reportComplete(
+		runId: string,
+		output: Record<string, unknown>,
+		artifacts: { name: string; uri: string; content_type?: string; size_bytes?: number; checksum?: string }[],
+	): Promise<boolean> {
 		const payload = {
 			agent_id: client.agentId,
 			output,
-			artifacts: [] as { name: string; uri: string; content_type?: string; size_bytes?: number; checksum?: string }[],
+			artifacts,
 		};
 		const path = `/api/runs/${encodeURIComponent(runId)}/complete`;
 		const result = await atlasWorkPost<RunRecord>(client, path, payload);
@@ -244,7 +248,10 @@ export function startWorkPoller(
 			lastResult = result;
 
 			if (result === "success") {
-				await reportComplete(run.run_id, { lumio_agent: client.agentId, result: "ok" });
+				// Handlers can attach output via (run as any)._handler_output
+				const handlerOutput = (run as any)._handler_output ?? { result: "ok" };
+				const artifacts: { name: string; uri: string; content_type?: string; size_bytes?: number; checksum?: string }[] = [];
+				await reportComplete(run.run_id, handlerOutput, artifacts);
 			} else {
 				await reportFailure(run.run_id, "Work handler returned failure");
 			}

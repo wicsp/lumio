@@ -25,6 +25,7 @@ import {
 	type WorkStatus,
 	type RunRecord,
 } from "./work";
+import { bilibiliSummaryHandler } from "./jobs/bilibili";
 
 // ─── Module state ────────────────────────────────────────────────────
 
@@ -67,14 +68,27 @@ function stopHeartbeat() {
 
 // ─── Work polling ───────────────────────────────────────────────────
 
-/** Default no-op work handler. Applications register real handlers via setWorkHandler(). */
-let workHandler: ((run: RunRecord) => Promise<"success" | "failure">) | null = null;
+// ─── Job router ─────────────────────────────────────────────────────
+
+/** Job handlers registered by name. */
+const jobHandlers = new Map<string, (run: RunRecord) => Promise<"success" | "failure">>();
+
+/** Register a job handler for a given job_name. */
+export function registerJobHandler(name: string, handler: (run: RunRecord) => Promise<"success" | "failure">) {
+	jobHandlers.set(name, handler);
+}
+
+async function dispatchJob(run: RunRecord): Promise<"success" | "failure"> {
+	const handler = jobHandlers.get(run.job_name);
+	if (handler) return handler(run);
+	// No handler registered: accept and mark complete.
+	return "success";
+}
 
 function startWorkPolling(c: AtlasClient) {
 	stopWorkPolling();
 
-	// Build capabilities from the current session metadata.
-	const capabilities: string[] = [];
+	const capabilities = Array.from(jobHandlers.keys());
 
 	workPoller = startWorkPoller(
 		c,
@@ -83,14 +97,7 @@ function startWorkPolling(c: AtlasClient) {
 			pollIntervalMs: 10_000,
 			heartbeatIntervalMs: 15_000,
 		},
-		async (run) => {
-			if (workHandler) {
-				return workHandler(run);
-			}
-			// Default: acknowledge but don't execute — return success so runs
-			// are marked complete rather than left pending forever.
-			return "success";
-		},
+		dispatchJob,
 	);
 }
 
@@ -99,11 +106,6 @@ function stopWorkPolling() {
 		workPoller.stop();
 		workPoller = null;
 	}
-}
-
-/** Register a real work handler. Call during extension setup. */
-export function setWorkHandler(handler: (run: RunRecord) => Promise<"success" | "failure">) {
-	workHandler = handler;
 }
 
 // ─── Status display ──────────────────────────────────────────────────
@@ -149,7 +151,7 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
 	const payload: AtlasAgentRegistration = {
 		agent_id: c.agentId,
 		name: generateAgentName(c.config),
-		capabilities: [], // No capabilities until invocation contracts are stable.
+		capabilities: Array.from(jobHandlers.keys()),
 		metadata: buildMetadata(c.config),
 	};
 
@@ -160,6 +162,62 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
 // ─── Extension entry point ───────────────────────────────────────────
 
 export default function atlasExtension(pi: ExtensionAPI) {
+	// ── Register job handlers ────────────────────────────────────
+	registerJobHandler("bilibili-summary", bilibiliSummaryHandler);
+
+	// ── /atlas enqueue command ───────────────────────────────────
+	pi.registerCommand("atlas:enqueue", {
+		description: "Enqueue a Bilibili video URL for summary processing",
+		handler: async (args, ctx) => {
+			const url = args.trim();
+			if (!url) {
+				ctx.ui.notify("Usage: /atlas:enqueue <B站视频URL>", "warning");
+				return;
+			}
+
+			if (!client) {
+				ctx.ui.notify("Atlas not connected. Start a new session to activate.", "warning");
+				return;
+			}
+
+			// Validate URL contains BV号
+			if (!url.match(/BV[a-zA-Z0-9]{10}/)) {
+				ctx.ui.notify("Invalid B站 URL — must contain a BV号 (e.g. BV1xx411c7mD).", "warning");
+				return;
+			}
+
+			try {
+				const resp = await fetch(
+					`${client.config.url.replace(/\/+$/, "")}/api/runs/enqueue`,
+					{
+						method: "POST",
+						headers: {
+							Authorization: `Bearer ${client.config.token}`,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							project_id: "bilibili-capture",
+							job_name: "bilibili-summary",
+							input: { url },
+							priority: 5,
+						}),
+					},
+				);
+				if (resp.ok) {
+					const data = await resp.json() as any;
+					ctx.ui.notify(
+						`Atlas: enqueued ${data.run_id} — agent will process shortly.`,
+						"info",
+					);
+				} else {
+					ctx.ui.notify(`Atlas enqueue failed: HTTP ${resp.status}`, "warning");
+				}
+			} catch (err) {
+				ctx.ui.notify(`Atlas enqueue error: ${err instanceof Error ? err.message : String(err)}`, "warning");
+			}
+		},
+	});
+
 	// ── /atlas command ─────────────────────────────────────────────
 	pi.registerCommand("atlas", {
 		description: "Show Atlas connection and agent status",
