@@ -37,6 +37,7 @@ import triageCommentsExtension from "./review/triage-comments";
 import questionnaireExtension from "./ui/questionnaire";
 import todoExtension from "./todo/todo";
 import agentWorkflowAuditExtension from "./workflows/agent-workflow-audit";
+import atlasExtension from "./atlas/index";
 
 // ── UI / experience ─────────────────────────────────────────────────
 import registerMinimalFooter from "./ui/minimal-footer";
@@ -69,6 +70,7 @@ export default function (pi: ExtensionAPI) {
 	questionnaireExtension(pi);
 	todoExtension(pi);
 	agentWorkflowAuditExtension(pi);
+	atlasExtension(pi);
 
 	// ── UI / experience ───────────────────────────────────────────────
 	registerMinimalFooter(pi);
