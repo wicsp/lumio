@@ -28,30 +28,66 @@
         "extensions/notifications/bark.ts"
       ],
       "pathMappings": {
-        "extensions/agent-workflow-audit/": ["extensions/workflows/agent-workflow-audit.ts"],
-        "extensions/brrr/": ["extensions/notifications/bark.ts"],
-        "extensions/claude-fast/": ["extensions/model/fast-mode.ts"],
-        "extensions/confirm-destructive/": ["extensions/guards/confirm-destructive.ts"],
-        "extensions/context-cap/": ["extensions/context/cap.ts"],
-        "extensions/context-inspector/": ["extensions/context/inspector.ts"],
-        "extensions/dirty-repo-guard/": ["extensions/guards/dirty-repo.ts"],
-        "extensions/gnosis/": ["extensions/knowledge/gnosis.ts"],
-        "extensions/inline-bash/": ["extensions/input/inline-bash.ts"],
-        "extensions/librarian/": ["extensions/knowledge/librarian.ts"],
+        "extensions/agent-workflow-audit/": [
+          "extensions/workflows/agent-workflow-audit.ts"
+        ],
+        "extensions/brrr/": [
+          "extensions/notifications/bark.ts"
+        ],
+        "extensions/claude-fast/": [
+          "extensions/model/fast-mode.ts"
+        ],
+        "extensions/confirm-destructive/": [
+          "extensions/guards/confirm-destructive.ts"
+        ],
+        "extensions/context-cap/": [
+          "extensions/context/cap.ts"
+        ],
+        "extensions/context-inspector/": [
+          "extensions/context/inspector.ts"
+        ],
+        "extensions/dirty-repo-guard/": [
+          "extensions/guards/dirty-repo.ts"
+        ],
+        "extensions/gnosis/": [
+          "extensions/knowledge/gnosis.ts"
+        ],
+        "extensions/inline-bash/": [
+          "extensions/input/inline-bash.ts"
+        ],
+        "extensions/librarian/": [
+          "extensions/knowledge/librarian.ts"
+        ],
         "extensions/minimal-footer/": [
           "extensions/ui/minimal-footer.ts",
           "extensions/ui/openai-usage.ts"
         ],
-        "extensions/notify/": ["extensions/notifications/notify.ts"],
-        "extensions/openai-fast/": ["extensions/model/fast-mode.ts"],
-        "extensions/oracle/": ["extensions/knowledge/oracle.ts"],
-        "extensions/permission-gate/": ["extensions/guards/permission-gate.ts"],
-        "extensions/quiet-tools/": ["extensions/ui/quiet-tools.ts"],
-        "extensions/review/": ["extensions/review/review.ts"],
-        "extensions/todo/": ["extensions/todo/todo.ts"],
-        "extensions/triage-comments/": ["extensions/review/triage-comments.ts"]
+        "extensions/notify/": [
+          "extensions/notifications/notify.ts"
+        ],
+        "extensions/openai-fast/": [
+          "extensions/model/fast-mode.ts"
+        ],
+        "extensions/oracle/": [
+          "extensions/knowledge/oracle.ts"
+        ],
+        "extensions/permission-gate/": [
+          "extensions/guards/permission-gate.ts"
+        ],
+        "extensions/quiet-tools/": [
+          "extensions/ui/quiet-tools.ts"
+        ],
+        "extensions/review/": [
+          "extensions/review/review.ts"
+        ],
+        "extensions/todo/": [
+          "extensions/todo/todo.ts"
+        ],
+        "extensions/triage-comments/": [
+          "extensions/review/triage-comments.ts"
+        ]
       },
-      "lastCheckedRef": "1f98c6cb"
+      "lastCheckedRef": "d2b409a4"
     },
     {
       "id": "mitsuhiko/agent-stuff",
@@ -62,7 +98,9 @@
         "extensions/review/review.ts"
       ],
       "pathMappings": {
-        "extensions/review.ts": ["extensions/review/review.ts"]
+        "extensions/review.ts": [
+          "extensions/review/review.ts"
+        ]
       },
       "lastCheckedRef": "c77d4979"
     }

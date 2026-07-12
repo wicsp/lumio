@@ -19,11 +19,18 @@ import {
 	type AtlasClientStatus,
 	type AtlasAgentRegistration,
 } from "./client";
+import {
+	startWorkPoller,
+	type WorkPoller,
+	type WorkStatus,
+	type RunRecord,
+} from "./work";
 
 // ─── Module state ────────────────────────────────────────────────────
 
 let client: AtlasClient | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let workPoller: WorkPoller | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const REGISTRATION_TIMEOUT_MS = 5_000;
@@ -58,7 +65,61 @@ function stopHeartbeat() {
 	}
 }
 
+// ─── Work polling ───────────────────────────────────────────────────
+
+/** Default no-op work handler. Applications register real handlers via setWorkHandler(). */
+let workHandler: ((run: RunRecord) => Promise<"success" | "failure">) | null = null;
+
+function startWorkPolling(c: AtlasClient) {
+	stopWorkPolling();
+
+	// Build capabilities from the current session metadata.
+	const capabilities: string[] = [];
+
+	workPoller = startWorkPoller(
+		c,
+		{
+			capabilities,
+			pollIntervalMs: 10_000,
+			heartbeatIntervalMs: 15_000,
+		},
+		async (run) => {
+			if (workHandler) {
+				return workHandler(run);
+			}
+			// Default: acknowledge but don't execute — return success so runs
+			// are marked complete rather than left pending forever.
+			return "success";
+		},
+	);
+}
+
+function stopWorkPolling() {
+	if (workPoller !== null) {
+		workPoller.stop();
+		workPoller = null;
+	}
+}
+
+/** Register a real work handler. Call during extension setup. */
+export function setWorkHandler(handler: (run: RunRecord) => Promise<"success" | "failure">) {
+	workHandler = handler;
+}
+
 // ─── Status display ──────────────────────────────────────────────────
+
+function formatWorkStatus(ws: WorkStatus): string {
+	switch (ws.kind) {
+		case "idle":
+			return "  work: idle (polling for jobs)";
+		case "claimed":
+			return `  work: running ${ws.run.job_name} (${ws.run.run_id.slice(0, 16)}…) · attempt ${ws.run.attempt_number}/${ws.run.max_attempts}`;
+		case "completed": {
+			const emoji = ws.result === "success" ? "✓" : "✗";
+			return `  work: last job ${emoji} ${ws.run.job_name} (${ws.run.run_id.slice(0, 16)}…)`;
+		}
+	}
+}
 
 function formatStatus(status: AtlasClientStatus): string {
 	if (status.kind === "disconnected") {
@@ -120,7 +181,11 @@ export default function atlasExtension(pi: ExtensionAPI) {
 			}
 
 			const status = await client.status();
-			ctx.ui.notify(formatStatus(status), status.kind === "connected" ? "info" : "warning");
+			let msg = formatStatus(status);
+			if (workPoller) {
+				msg += "\n" + formatWorkStatus(workPoller.status());
+			}
+			ctx.ui.notify(msg, status.kind === "connected" ? "info" : "warning");
 		},
 	});
 
@@ -161,13 +226,19 @@ export default function atlasExtension(pi: ExtensionAPI) {
 				// a subsequent heartbeat call (Atlas upserts on register).
 				startHeartbeat(client, ctx);
 			}
+
+			// Start work polling with a no-op handler for now.
+			// Real job handlers will be registered in M3 (Bilibili vertical slice).
+			startWorkPolling(client);
 		} catch {
 			// Connectivity is optional — start heartbeat anyway.
 			startHeartbeat(client, ctx);
+			startWorkPolling(client);
 		}
 	});
 
 	pi.on("session_shutdown", () => {
+		stopWorkPolling();
 		stopHeartbeat();
 		client = null;
 	});
