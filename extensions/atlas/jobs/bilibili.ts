@@ -189,7 +189,7 @@ export async function bilibiliSummaryHandler(run: RunRecord): Promise<"success" 
 	const input = run.input as BilibiliRunInput;
 	const url = input?.url;
 	if (!url) {
-		// Store error in run output (handled by caller).
+		(run as any)._handler_output = { error: "Missing required field: url" };
 		return "failure";
 	}
 
@@ -199,12 +199,18 @@ export async function bilibiliSummaryHandler(run: RunRecord): Promise<"success" 
 	// Parse BV ID for early validation.
 	const bvid = extractBvid(url);
 	if (!bvid) {
+		(run as any)._handler_output = { error: `Cannot extract BV号 from URL: ${url}` };
 		return "failure";
 	}
 
 	// Step 1: Extract cookies.
 	const cookieFile = extractCookies(browser);
 	if (!cookieFile) {
+		(run as any)._handler_output = {
+			error: `Failed to extract cookies from ${browser} browser.`,
+			url,
+			bvid,
+		};
 		return "failure";
 	}
 

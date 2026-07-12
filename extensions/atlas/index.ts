@@ -187,6 +187,23 @@ export default function atlasExtension(pi: ExtensionAPI) {
 			}
 
 			try {
+				// Ensure bilibili-capture project exists.
+				const projResp = await fetch(
+					`${client.config.url.replace(/\/+$/, "")}/api/projects`,
+					{
+						method: "POST",
+						headers: {
+							Authorization: `Bearer ${client.config.token}`,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							project_id: "bilibili-capture",
+							name: "Bilibili Video Capture",
+							description: "Inbox for B站 video URLs captured from Share Sheet.",
+						}),
+					},
+				).catch(() => null);
+
 				const resp = await fetch(
 					`${client.config.url.replace(/\/+$/, "")}/api/runs/enqueue`,
 					{

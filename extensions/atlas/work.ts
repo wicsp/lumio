@@ -253,7 +253,8 @@ export function startWorkPoller(
 				const artifacts: { name: string; uri: string; content_type?: string; size_bytes?: number; checksum?: string }[] = [];
 				await reportComplete(run.run_id, handlerOutput, artifacts);
 			} else {
-				await reportFailure(run.run_id, "Work handler returned failure");
+				const errorMsg = (run as any)._handler_output?.error ?? "Work handler returned failure";
+				await reportFailure(run.run_id, String(errorMsg));
 			}
 		} catch (err) {
 			lastResult = "failure";
