@@ -84,6 +84,9 @@ export interface RunRecord {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  /** Execution attempt identity (RFC 0002 v2 claim response). */
+  attempt_id?: string;
+  claim_token?: string;
 }
 
 export type WorkStatus =
@@ -293,10 +296,14 @@ export function startWorkPoller(
    */
   async function reportComplete(
     runId: string,
+    attemptId: string | undefined,
+    claimToken: string | undefined,
     output: Record<string, unknown>,
     artifacts: ArtifactRefCreate[],
   ): Promise<{ ok: boolean; reason?: string }> {
     const payload = {
+      attempt_id: attemptId ?? "",
+      claim_token: claimToken ?? "",
       agent_id: client.agentId,
       output,
       artifacts,
@@ -321,11 +328,15 @@ export function startWorkPoller(
    */
   async function reportFailure(
     runId: string,
+    attemptId: string | undefined,
+    claimToken: string | undefined,
     code: string,
     message: string,
     retryable = false,
   ): Promise<{ ok: boolean; reason?: string }> {
     const payload = {
+      attempt_id: attemptId ?? "",
+      claim_token: claimToken ?? "",
       agent_id: client.agentId,
       error_code: code,
       error_message: message,
@@ -400,6 +411,8 @@ export function startWorkPoller(
       if (handlerResult.status === "success") {
         const reportResult = await reportComplete(
           run.run_id,
+          run.attempt_id,
+          run.claim_token,
           handlerResult.output,
           handlerResult.artifacts,
         );
@@ -417,6 +430,8 @@ export function startWorkPoller(
         // Handler returned failure.
         const reportResult = await reportFailure(
           run.run_id,
+          run.attempt_id,
+          run.claim_token,
           handlerResult.code,
           handlerResult.message,
           handlerResult.retryable,
@@ -436,7 +451,7 @@ export function startWorkPoller(
 
       if (!controller.signal.aborted) {
         // Best-effort failure report.
-        await reportFailure(run.run_id, "handler_crash", msg);
+        await reportFailure(run.run_id, run.attempt_id, run.claim_token, "handler_crash", msg);
       }
     } finally {
       if (currentController === controller) {
@@ -470,6 +485,9 @@ export function startWorkPoller(
   // Start polling
   pollTimer = setInterval(poll, config.pollIntervalMs);
   if ("unref" in pollTimer) (pollTimer as NodeJS.Timeout).unref();
+
+  // Report initial idle state immediately.
+  notifyStatus();
 
   // Do an initial poll immediately
   poll();

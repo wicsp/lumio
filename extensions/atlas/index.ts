@@ -108,7 +108,7 @@ async function dispatchJob(
   };
 }
 
-function startWorkPolling(c: AtlasClient) {
+function startWorkPolling(c: AtlasClient, ui: { setStatus: (k: string, v: string | undefined) => void }) {
   stopWorkPolling();
 
   const capabilities = Array.from(jobHandlers.keys());
@@ -121,6 +121,9 @@ function startWorkPolling(c: AtlasClient) {
       heartbeatIntervalMs: 15_000,
     },
     dispatchJob,
+    (ws) => {
+      ui.setStatus("atlas-work", compactWorkStatus(ws));
+    },
   );
 }
 
@@ -128,6 +131,21 @@ function stopWorkPolling() {
   if (workPoller !== null) {
     workPoller.stop();
     workPoller = null;
+  }
+}
+
+// ─── Work status for footer ─────────────────────────────────────────
+
+function compactWorkStatus(ws: WorkStatus): string {
+  switch (ws.kind) {
+    case "idle":
+      return "Atlas: idle";
+    case "claimed":
+      return `Atlas: running ${ws.run.job_name}`;
+    case "completed":
+      return ws.result === "success"
+        ? `Atlas: ✓ ${ws.run.job_name}`
+        : `Atlas: ✗ ${ws.run.job_name}`;
   }
 }
 
@@ -327,11 +345,11 @@ export default function atlasExtension(pi: ExtensionAPI) {
         startHeartbeat(client, ctx);
       }
 
-      startWorkPolling(client);
+      startWorkPolling(client, ctx.ui);
     } catch {
       // Connectivity is optional — start heartbeat anyway.
       startHeartbeat(client, ctx);
-      startWorkPolling(client);
+      startWorkPolling(client, ctx.ui);
     }
   });
 
