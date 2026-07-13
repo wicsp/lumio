@@ -146,6 +146,8 @@ function compactWorkStatus(ws: WorkStatus): string {
       return ws.result === "success"
         ? `Atlas: ✓ ${ws.run.job_name}`
         : `Atlas: ✗ ${ws.run.job_name}`;
+    case "abandoned":
+      return `Atlas: ⚠ ${ws.run.job_name}`;
   }
 }
 
@@ -161,6 +163,8 @@ function formatWorkStatus(ws: WorkStatus): string {
       const emoji = ws.result === "success" ? "✓" : "✗";
       return `  work: last job ${emoji} ${ws.run.job_name} (${ws.run.run_id.slice(0, 16)}…) · ${ws.detail}`;
     }
+    case "abandoned":
+      return `  work: ⚠ lease lost — ${ws.run.job_name} (${ws.run.run_id.slice(0, 16)}…) · ${ws.reason}`;
   }
 }
 
