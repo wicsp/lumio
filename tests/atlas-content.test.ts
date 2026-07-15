@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,7 @@ import {
   createKnowledgeCommentDraft,
   ensureVaultStructure,
   projectResourceCard,
+  removeResourceCard,
   type AtlasResourceRecord,
 } from "../extensions/atlas/obsidian";
 
@@ -63,25 +64,45 @@ test("summary artifacts and Resource IDs are content addressed", () => {
 test("Resource Card is rebuilt from verified artifact and marked machine generated", async () => {
   const root = mkdtempSync(join(tmpdir(), "lumio-rfc3-project-"));
   const artifactRoot = join(root, "artifacts");
-  const vault = join(root, "Vortex Next");
+  const vault = join(root, "Vortex");
   process.env.ATLAS_ARTIFACT_ROOT = artifactRoot;
   const artifact = storeSummaryArtifact("# 内容概览\n\n机器摘要。\n", "BV1234567890");
   const cardResource = resource({ content_hash: artifact.checksum! });
 
-  const relativePath = await projectResourceCard(vault, {
+  const projection = await projectResourceCard(vault, {
     ...cardResource,
     artifact_uri: artifact.uri,
     source_uri: "https://www.bilibili.com/video/BV1234567890",
   });
-  const card = readFileSync(join(vault, relativePath), "utf-8");
+  const cardPath = join(vault, projection.relative_path);
+  const card = readFileSync(cardPath, "utf-8");
 
-  assert.equal(relativePath, `Resources/Cards/${cardResource.resource_id}.md`);
+  assert.equal(projection.relative_path, `Resources/Cards/${cardResource.resource_id}.md`);
+  assert.equal(projection.action, "created");
   assert.match(card, /generated: true/);
   assert.match(card, /Machine-generated Resource/);
   assert.match(card, /机器摘要/);
   assert.match(card, new RegExp(cardResource.resource_id));
   assert.match(card, new RegExp(cardResource.source_id));
   assert.match(card, /https:\/\/www\.bilibili\.com\/video\/BV1234567890/);
+
+  const initialMtime = statSync(cardPath, { bigint: true }).mtimeNs;
+  const unchanged = await projectResourceCard(vault, {
+    ...cardResource,
+    artifact_uri: artifact.uri,
+    source_uri: "https://www.bilibili.com/video/BV1234567890",
+  });
+  assert.equal(unchanged.action, "unchanged");
+  assert.equal(statSync(cardPath, { bigint: true }).mtimeNs, initialMtime);
+
+  const reviewed = await projectResourceCard(vault, {
+    ...cardResource,
+    review_status: "reviewed",
+    artifact_uri: artifact.uri,
+    source_uri: "https://www.bilibili.com/video/BV1234567890",
+  });
+  assert.equal(reviewed.action, "updated");
+  assert.match(readFileSync(cardPath, "utf-8"), /review_status: "reviewed"/);
 });
 
 test("Resource Card projection rejects artifact hash mismatch", async () => {
@@ -102,7 +123,7 @@ test("Resource Card projection rejects artifact hash mismatch", async () => {
 
 test("blank Knowledge Comment is explicit and never overwritten", async () => {
   const root = mkdtempSync(join(tmpdir(), "lumio-rfc3-comment-"));
-  const vault = join(root, "Vortex Next");
+  const vault = join(root, "Vortex");
   await ensureVaultStructure(vault);
   const first = await createKnowledgeCommentDraft(vault, resource());
   const initial = readFileSync(first.absolute_path, "utf-8");
@@ -121,9 +142,35 @@ test("blank Knowledge Comment is explicit and never overwritten", async () => {
   assert.match(second.uri, /^obsidian:\/\/open\?/);
 });
 
+test("dismissing a Resource removes only its rebuildable card", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lumio-rfc3-dismiss-"));
+  const artifactRoot = join(root, "artifacts");
+  const vault = join(root, "Vortex");
+  process.env.ATLAS_ARTIFACT_ROOT = artifactRoot;
+  const artifact = storeSummaryArtifact("# AI Resource\n", "BV1234567890");
+  const cardResource = resource({ content_hash: artifact.checksum! });
+  const draft = await createKnowledgeCommentDraft(vault, cardResource);
+  const humanText = `${readFileSync(draft.absolute_path, "utf-8")}\n这是我的评论。\n`;
+  writeFileSync(draft.absolute_path, humanText, "utf-8");
+  const projection = await projectResourceCard(vault, {
+    ...cardResource,
+    artifact_uri: artifact.uri,
+    source_uri: "https://example.test/source",
+  });
+  const cardPath = join(vault, projection.relative_path);
+
+  const first = await removeResourceCard(vault, cardResource.resource_id);
+  const second = await removeResourceCard(vault, cardResource.resource_id);
+
+  assert.equal(first.removed, true);
+  assert.equal(second.removed, false);
+  assert.equal(existsSync(cardPath), false);
+  assert.equal(readFileSync(draft.absolute_path, "utf-8"), humanText);
+});
+
 test("new vault structure separates Knowledge and Resources", async () => {
   const root = mkdtempSync(join(tmpdir(), "lumio-rfc3-vault-"));
-  const vault = join(root, "Vortex Next");
+  const vault = join(root, "Vortex");
   await ensureVaultStructure(vault);
 
   const policy = readFileSync(join(vault, "System", "Policy.md"), "utf-8");

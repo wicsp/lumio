@@ -38,6 +38,9 @@ import {
   createKnowledgeCommentDraft,
   ensureVaultStructure,
   projectResourceCard,
+  removeResourceCard,
+  type ResourceCardProjection,
+  type ResourceCardRemoval,
   type AtlasResourceRecord,
   type AtlasSourceRecord,
 } from "./obsidian";
@@ -118,7 +121,7 @@ async function fetchResourceBundle(
   return response.data;
 }
 
-async function projectBundle(bundle: AtlasResourceBundle): Promise<string | null> {
+async function projectBundle(bundle: AtlasResourceBundle): Promise<ResourceCardProjection | null> {
   const vaultPath = configuredVaultPath();
   if (!vaultPath || bundle.resource.kind !== "summary") return null;
   return projectResourceCard(vaultPath, {
@@ -140,20 +143,74 @@ async function projectPublishedResources(
   }
 }
 
-async function syncPendingResourceCards(c: AtlasClient): Promise<number> {
+export interface ResourceCardReconciliation {
+  created: number;
+  updated: number;
+  removed: number;
+  unchanged: number;
+  failed: number;
+  errors: string[];
+}
+
+/** Make the rebuildable Resource Card projection match Atlas' current review metadata. */
+export async function reconcileResourceCards(
+  c: Pick<AtlasClient, "controlGet">,
+): Promise<ResourceCardReconciliation> {
   const vaultPath = configuredVaultPath();
   if (!vaultPath) throw new Error("ATLAS_OBSIDIAN_VAULT is not configured");
   await ensureVaultStructure(vaultPath);
   const response = await c.controlGet<AtlasResourceRecord[]>(
-    "/api/resources?kind=summary&review_status=pending&limit=500",
+    "/api/resources?kind=summary&limit=500",
   );
   if (!response.ok) throw new Error(response.error);
-  let projected = 0;
-  for (const resource of response.data) {
-    const path = await projectBundle(await fetchResourceBundle(c, resource.resource_id));
-    if (path) projected += 1;
-  }
-  return projected;
+
+  const result: ResourceCardReconciliation = {
+    created: 0,
+    updated: 0,
+    removed: 0,
+    unchanged: 0,
+    failed: 0,
+    errors: [],
+  };
+  let cursor = 0;
+  const workerCount = Math.min(4, response.data.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (cursor < response.data.length) {
+      const resource = response.data[cursor++];
+      try {
+        if (resource.review_status === "dismissed") {
+          const removal = await removeResourceCard(vaultPath, resource.resource_id);
+          result[removal.removed ? "removed" : "unchanged"] += 1;
+          continue;
+        }
+        const bundleResponse = await c.controlGet<AtlasResourceBundle>(
+          `/api/resources/${encodeURIComponent(resource.resource_id)}/bundle`,
+        );
+        if (!bundleResponse.ok) throw new Error(bundleResponse.error);
+        const projection = await projectBundle(bundleResponse.data);
+        if (projection) result[projection.action] += 1;
+      } catch (error) {
+        result.failed += 1;
+        if (result.errors.length < 3) {
+          const detail = error instanceof Error ? error.message : String(error);
+          result.errors.push(`${resource.resource_id}: ${detail}`);
+        }
+      }
+    }
+  });
+  await Promise.all(workers);
+  return result;
+}
+
+function formatReconciliation(result: ResourceCardReconciliation): string {
+  const counts = [
+    `created ${result.created}`,
+    `updated ${result.updated}`,
+    `removed ${result.removed}`,
+    `unchanged ${result.unchanged}`,
+    `failed ${result.failed}`,
+  ].join(", ");
+  return result.errors.length > 0 ? `${counts}; ${result.errors.join("; ")}` : counts;
 }
 
 /**
@@ -354,19 +411,22 @@ export default function atlasExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("atlas:sync", {
-    description: "Rebuild pending Atlas AI Resource Cards in Vortex Next",
+  pi.registerCommand("atlas:reconcile", {
+    description: "Reconcile all Atlas summary Resource Cards into Vortex",
     handler: async (_args, ctx) => {
       if (!client) {
         ctx.ui.notify("Atlas is not connected.", "warning");
         return;
       }
       try {
-        const count = await syncPendingResourceCards(client);
-        ctx.ui.notify(`Atlas: projected ${count} pending Resource Card(s).`, "info");
+        const result = await reconcileResourceCards(client);
+        ctx.ui.notify(
+          `Atlas reconciliation: ${formatReconciliation(result)}.`,
+          result.failed > 0 ? "warning" : "info",
+        );
       } catch (err) {
         ctx.ui.notify(
-          `Atlas Resource sync failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Atlas reconciliation failed: ${err instanceof Error ? err.message : String(err)}`,
           "warning",
         );
       }
@@ -402,17 +462,132 @@ export default function atlasExtension(pi: ExtensionAPI) {
           );
           return;
         }
-        await client.controlPatch(
+        const reviewed = await client.controlPatch<AtlasResourceRecord>(
           `/api/resources/${encodeURIComponent(resourceId)}/review`,
           { review_status: "reviewed" },
         );
+        if (!reviewed.ok) {
+          ctx.ui.notify(
+            `Comment registered, but Atlas review update failed: ${reviewed.error}`,
+            "warning",
+          );
+          return;
+        }
+        let projection: ResourceCardProjection | null;
+        try {
+          projection = await projectBundle({ ...bundle, resource: reviewed.data });
+        } catch (err) {
+          ctx.ui.notify(
+            `Comment registered and Resource reviewed, but card projection failed: ${err instanceof Error ? err.message : String(err)}`,
+            "warning",
+          );
+          return;
+        }
         ctx.ui.notify(
-          `${draft.created ? "Created" : "Kept existing"} ${draft.relative_path}. Write the comment yourself in Obsidian.`,
+          `${draft.created ? "Created" : "Kept existing"} ${draft.relative_path}; Resource is reviewed${projection ? ` and card ${projection.action}` : ""}. Write the comment yourself in Obsidian.`,
           "info",
         );
       } catch (err) {
         ctx.ui.notify(
           `Atlas comment setup failed: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
+      }
+    },
+  });
+
+  pi.registerCommand("atlas:dismiss", {
+    description: "Dismiss one Atlas Resource and remove its rebuildable Vortex card",
+    handler: async (args, ctx) => {
+      const resourceId = args.trim();
+      if (!resourceId) {
+        ctx.ui.notify("Usage: /atlas:dismiss <resource_id>", "warning");
+        return;
+      }
+      if (!client) {
+        ctx.ui.notify("Atlas is not connected.", "warning");
+        return;
+      }
+      try {
+        const dismissed = await client.controlPatch<AtlasResourceRecord>(
+          `/api/resources/${encodeURIComponent(resourceId)}/review`,
+          { review_status: "dismissed" },
+        );
+        if (!dismissed.ok) {
+          ctx.ui.notify(`Atlas dismiss refused: ${dismissed.error}`, "warning");
+          return;
+        }
+
+        const vaultPath = configuredVaultPath();
+        if (dismissed.data.kind === "summary" && vaultPath) {
+          let removal: ResourceCardRemoval;
+          try {
+            removal = await removeResourceCard(vaultPath, resourceId);
+          } catch (err) {
+            ctx.ui.notify(
+              `Atlas dismissed ${resourceId}, but local card removal failed: ${err instanceof Error ? err.message : String(err)}. Reconciliation will retry it.`,
+              "warning",
+            );
+            return;
+          }
+          ctx.ui.notify(
+            `Atlas: dismissed ${resourceId}; Resource Card ${removal.removed ? "removed" : "was already absent"}.`,
+            "info",
+          );
+        } else {
+          ctx.ui.notify(`Atlas: dismissed ${resourceId}.`, "info");
+        }
+      } catch (err) {
+        ctx.ui.notify(
+          `Atlas dismiss failed: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
+      }
+    },
+  });
+
+  pi.registerCommand("atlas:restore", {
+    description: "Restore one dismissed Atlas Resource to pending review",
+    handler: async (args, ctx) => {
+      const resourceId = args.trim();
+      if (!resourceId) {
+        ctx.ui.notify("Usage: /atlas:restore <resource_id>", "warning");
+        return;
+      }
+      if (!client) {
+        ctx.ui.notify("Atlas is not connected.", "warning");
+        return;
+      }
+      try {
+        const restored = await client.controlPatch<AtlasResourceRecord>(
+          `/api/resources/${encodeURIComponent(resourceId)}/review`,
+          { review_status: "pending" },
+        );
+        if (!restored.ok) {
+          ctx.ui.notify(`Atlas restore failed: ${restored.error}`, "warning");
+          return;
+        }
+
+        let projection: ResourceCardProjection | null = null;
+        if (restored.data.kind === "summary" && configuredVaultPath()) {
+          try {
+            const bundle = await fetchResourceBundle(client, resourceId);
+            projection = await projectBundle({ ...bundle, resource: restored.data });
+          } catch (err) {
+            ctx.ui.notify(
+              `Atlas restored ${resourceId} to pending, but card projection failed: ${err instanceof Error ? err.message : String(err)}. Reconciliation will retry it.`,
+              "warning",
+            );
+            return;
+          }
+        }
+        ctx.ui.notify(
+          `Atlas: restored ${resourceId} to pending${projection ? `; Resource Card ${projection.action}` : ""}.`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui.notify(
+          `Atlas restore failed: ${err instanceof Error ? err.message : String(err)}`,
           "warning",
         );
       }
@@ -472,7 +647,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
         await ensureVaultStructure(vaultPath);
       } catch (err) {
         ctx.ui.notify(
-          `Vortex Next bootstrap failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Vortex bootstrap failed: ${err instanceof Error ? err.message : String(err)}`,
           "warning",
         );
       }
@@ -483,12 +658,25 @@ export default function atlasExtension(pi: ExtensionAPI) {
       const ok = await tryRegister(client);
       if (ok) {
         startHeartbeat(client, ctx);
-        // Single concise startup diagnostic.
+        let reconciliationText = "";
+        let reconciliationFailed = false;
+        if (vaultPath) {
+          try {
+            const result = await reconcileResourceCards(client);
+            reconciliationText = `; Vortex ${formatReconciliation(result)}`;
+            reconciliationFailed = result.failed > 0;
+          } catch (err) {
+            reconciliationFailed = true;
+            reconciliationText = `; Vortex reconciliation failed: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        }
+
+        // Single startup diagnostic includes the projection result, so reconciliation is visible.
         const status = await client.status();
         if (status.kind === "connected" && status.agent) {
           ctx.ui.notify(
-            `Atlas: registered as ${status.agent.agent_id}`,
-            "info",
+            `Atlas: registered as ${status.agent.agent_id}${reconciliationText}`,
+            reconciliationFailed ? "warning" : "info",
           );
         }
       } else if (ctx.hasUI) {

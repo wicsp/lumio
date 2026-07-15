@@ -43,6 +43,18 @@ export interface ProjectableResource extends AtlasResourceRecord {
   source_uri: string;
 }
 
+export type ResourceCardProjectionAction = "created" | "updated" | "unchanged";
+
+export interface ResourceCardProjection {
+  relative_path: string;
+  action: ResourceCardProjectionAction;
+}
+
+export interface ResourceCardRemoval {
+  relative_path: string;
+  removed: boolean;
+}
+
 const REQUIRED_DIRECTORIES = [
   "Knowledge/Inbox",
   "Knowledge/Comments",
@@ -96,13 +108,13 @@ created:
 <!-- 如果观点发生变化，链接到旧评论并说明变化。 -->
 `);
 
-  await writeIfMissing(join(vaultPath, "Home.md"), `# Vortex Next
+  await writeIfMissing(join(vaultPath, "Home.md"), `# Vortex
 
 - [[System/Policy|Knowledge boundary]]
 - Human work: \`Knowledge/\`
 - Machine-generated review material: \`Resources/\`
 
-此库从空结构开始；旧 Vortex 仅作为备份和按需参考，不做批量迁移。
+此库从空结构开始；Vortexbackup 仅作为备份和按需参考，不做批量迁移。
 `);
 }
 
@@ -110,7 +122,7 @@ created:
 export async function projectResourceCard(
   vaultPath: string,
   resource: ProjectableResource,
-): Promise<string> {
+): Promise<ResourceCardProjection> {
   if (!resource.artifact_uri.startsWith("file://")) {
     throw new Error(`Unsupported artifact URI: ${resource.artifact_uri.slice(0, 80)}`);
   }
@@ -126,7 +138,7 @@ export async function projectResourceCard(
   }
 
   await ensureVaultStructure(vaultPath);
-  const relativePath = `Resources/Cards/${resource.resource_id}.md`;
+  const relativePath = resourceCardRelativePath(resource.resource_id);
   const destination = join(vaultPath, ...relativePath.split("/"));
   const generator = resource.generator.mode === "ai"
     ? `${resource.generator.name}@${resource.generator.version} (${resource.generator.model_provider}/${resource.generator.model_id}, ${resource.generator.prompt_version})`
@@ -163,8 +175,27 @@ ${body.trim()}
 - Source ID: \`${resource.source_id}\`
 - Run ID: \`${resource.produced_by_run_id}\`
 `;
-  await atomicWrite(destination, card);
-  return relativePath;
+  const action = await atomicWriteIfChanged(destination, card);
+  return { relative_path: relativePath, action };
+}
+
+/** Remove only the rebuildable Resource Card; never touch Knowledge notes or artifacts. */
+export async function removeResourceCard(
+  vaultPath: string,
+  resourceId: string,
+): Promise<ResourceCardRemoval> {
+  const relativePath = resourceCardRelativePath(resourceId);
+  const destination = join(vaultPath, ...relativePath.split("/"));
+  const removed = await withMutationQueue(destination, async () => {
+    try {
+      await unlink(destination);
+      return true;
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) return false;
+      throw error;
+    }
+  });
+  return { relative_path: relativePath, removed };
 }
 
 export interface KnowledgeCommentDraft {
@@ -229,9 +260,21 @@ async function writeIfMissing(path: string, content: string): Promise<void> {
   });
 }
 
-async function atomicWrite(path: string, content: string): Promise<void> {
-  await withMutationQueue(path, async () => {
+async function atomicWriteIfChanged(
+  path: string,
+  content: string,
+): Promise<ResourceCardProjectionAction> {
+  return withMutationQueue(path, async () => {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    let current: string | null = null;
+    try {
+      current = await readFile(path, "utf-8");
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) throw error;
+    }
+    if (current === content) return "unchanged";
+
+    const action: ResourceCardProjectionAction = current === null ? "created" : "updated";
     const tempPath = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
     try {
       await writeFile(tempPath, content, { encoding: "utf-8", mode: 0o600, flag: "wx" });
@@ -239,6 +282,7 @@ async function atomicWrite(path: string, content: string): Promise<void> {
     } finally {
       try { await unlink(tempPath); } catch { /* renamed or absent */ }
     }
+    return action;
   });
 }
 
@@ -259,6 +303,20 @@ function obsidianUri(vaultPath: string, noteId: string): string {
 
 function yamlString(value: string): string {
   return JSON.stringify(value);
+}
+
+function resourceCardRelativePath(resourceId: string): string {
+  if (!/^res_[A-Za-z0-9._-]{8,120}$/.test(resourceId)) {
+    throw new Error(`Invalid Resource ID: ${resourceId.slice(0, 128)}`);
+  }
+  return `Resources/Cards/${resourceId}.md`;
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === code;
 }
 
 function markdownTitle(value: string): string {
