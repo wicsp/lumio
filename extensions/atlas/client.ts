@@ -10,7 +10,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -31,6 +30,7 @@ export interface AtlasAgentRegistration {
 export interface AtlasAgentRegistrationResponse {
   agent_id: string;
   scoped_token: string;
+  protocol_version: string;
 }
 
 export interface AtlasAgentRecord {
@@ -96,10 +96,13 @@ export function parseConfig(): AtlasConfig | undefined {
 
 // ─── Identity ────────────────────────────────────────────────────────
 
-/** Generate a session-scoped agent identity. */
-export function generateAgentId(config: AtlasConfig): string {
-  const sessionId = randomUUID().split("-")[0];
-  return `${config.nodeId}.lumio.pi.${sessionId}`;
+/**
+ * Generate one combined Lumio executor identity from Pi's real session ID.
+ * Pi is runtime metadata, not a second agent hierarchy level.
+ */
+export function generateAgentId(config: AtlasConfig, piSessionId: string): string {
+  const instanceId = piSessionId.replace(/[^A-Za-z0-9]/g, "").slice(0, 16) || "ephemeral";
+  return `${config.nodeId}.lumio.${instanceId}`;
 }
 
 export function generateAgentName(config: AtlasConfig): string {
@@ -109,14 +112,20 @@ export function generateAgentName(config: AtlasConfig): string {
 // ─── Metadata ────────────────────────────────────────────────────────
 
 /** Build the registration metadata payload per RFC 0001. */
-export function buildMetadata(config: AtlasConfig): Record<string, unknown> {
+export function buildMetadata(
+  config: AtlasConfig,
+  instanceId?: string,
+): Record<string, unknown> {
   return {
     node_id: config.nodeId,
+    agent_kind: "interactive",
+    executor: "lumio",
     runtime: "pi",
+    instance_id: instanceId ?? null,
     runtime_version: _piVersion(),
     lumio_version: _lumioVersion(),
     git_revision: _lumioRevision(),
-    protocol_version: "atlas-agent-v2",
+    protocol_version: "atlas-agent-v3",
     interactive: true,
   };
 }
@@ -300,6 +309,17 @@ export interface AtlasClient {
 
   /** Build a human-readable status for the /atlas command. */
   status(): Promise<AtlasClientStatus>;
+
+  /** Use the provisioned personal control credential for Source/Resource metadata APIs. */
+  controlGet<T>(path: string): Promise<
+    { ok: true; data: T } | { ok: false; status: number; error: string }
+  >;
+  controlPost<T>(path: string, body: unknown): Promise<
+    { ok: true; data: T } | { ok: false; status: number; error: string }
+  >;
+  controlPatch<T>(path: string, body: unknown): Promise<
+    { ok: true; data: T } | { ok: false; status: number; error: string }
+  >;
 }
 
 class AtlasHttpClient implements AtlasClient {
@@ -342,22 +362,15 @@ class AtlasHttpClient implements AtlasClient {
     );
     if (result.ok) {
       const regResp = result.data;
+      if (regResp.protocol_version !== "atlas-agent-v3") {
+        const error = `Atlas protocol mismatch: expected atlas-agent-v3, received ${regResp.protocol_version || "unknown"}`;
+        this._disconnectedReason = error;
+        return { ok: false, error };
+      }
+      this.agentId = regResp.agent_id;
       // Store the scoped token for subsequent work operations.
       if (regResp.scoped_token) {
         this.scopedToken = regResp.scoped_token;
-      }
-      // Re-fetch to get the full agent record.
-      const agentResult = await atlasRequest<AtlasAgentRecord>(
-        this.config,
-        `/api/agents?agent_id=${encodeURIComponent(regResp.agent_id)}`,
-        "GET",
-        undefined,
-        DEFAULT_TIMEOUT_MS,
-        1,
-      );
-      if (agentResult.ok) {
-        // For list endpoints, we need to find our agent in the list.
-        // Instead, let's just build a minimal record from the registration response.
       }
       this._lastAgent = {
         agent_id: regResp.agent_id,
@@ -406,6 +419,18 @@ class AtlasHttpClient implements AtlasClient {
     };
   }
 
+  async controlGet<T>(path: string) {
+    return atlasRequest<T>(this.config, path, "GET", undefined, DEFAULT_TIMEOUT_MS, 1);
+  }
+
+  async controlPost<T>(path: string, body: unknown) {
+    return atlasRequest<T>(this.config, path, "POST", body, DEFAULT_TIMEOUT_MS, 2);
+  }
+
+  async controlPatch<T>(path: string, body: unknown) {
+    return atlasRequest<T>(this.config, path, "PATCH", body, DEFAULT_TIMEOUT_MS, 2);
+  }
+
   /** Build a concise diagnostic string (token redacted). */
   diagnostic(): string {
     const url = this.config.url;
@@ -420,7 +445,7 @@ class AtlasHttpClient implements AtlasClient {
   }
 }
 
-export function createClient(config: AtlasConfig): AtlasClient {
-  const agentId = generateAgentId(config);
+export function createClient(config: AtlasConfig, piSessionId: string): AtlasClient {
+  const agentId = generateAgentId(config, piSessionId);
   return new AtlasHttpClient(config, agentId);
 }

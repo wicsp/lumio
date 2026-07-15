@@ -56,8 +56,44 @@ export interface ArtifactRef {
   created_at: string;
 }
 
+export interface ResourceGenerator {
+  mode: "deterministic" | "ai";
+  name: string;
+  version: string;
+  model_provider?: string;
+  model_id?: string;
+  prompt_version?: string;
+}
+
+export interface SourceUpdate {
+  source_id: string;
+  canonical_uri?: string;
+  title?: string;
+  external_ids?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ResourceCreate {
+  resource_id: string;
+  source_id: string;
+  kind: "transcript" | "summary" | "extraction" | "comparison";
+  title: string;
+  artifact_name: string;
+  content_hash: string;
+  generator: ResourceGenerator;
+  metadata: Record<string, unknown>;
+}
+
+export interface HandlerSuccess {
+  status: "success";
+  output: Record<string, unknown>;
+  artifacts: ArtifactRefCreate[];
+  source_updates: SourceUpdate[];
+  resources: ResourceCreate[];
+}
+
 export type HandlerResult =
-  | { status: "success"; output: Record<string, unknown>; artifacts: ArtifactRefCreate[] }
+  | HandlerSuccess
   | { status: "failure"; code: string; message: string; retryable: boolean };
 
 export interface RunRecord {
@@ -295,6 +331,7 @@ export function startWorkPoller(
   cfg: Partial<WorkConfig>,
   onWork: (run: RunRecord, signal: AbortSignal) => Promise<HandlerResult>,
   onStatusChange?: (status: WorkStatus) => void,
+  onPublished?: (run: RunRecord, result: HandlerSuccess) => Promise<void>,
 ): WorkPoller {
   const config: WorkConfig = {
     capabilities: cfg.capabilities ?? [],
@@ -580,15 +617,16 @@ export function startWorkPoller(
 
   async function reportComplete(
     ctx: AttemptContext,
-    output: Record<string, unknown>,
-    artifacts: ArtifactRefCreate[],
+    result: HandlerSuccess,
   ): Promise<{ accepted: boolean; reason: string }> {
     return reportTerminal(ctx, {
       attempt_id: ctx.attemptId,
       claim_token: ctx.claimToken,
       agent_id: client.agentId,
-      output,
-      artifacts,
+      output: result.output,
+      artifacts: result.artifacts,
+      source_updates: result.source_updates,
+      resources: result.resources,
     }, `/api/runs/${encodeURIComponent(ctx.runId)}/complete`, "complete");
   }
 
@@ -694,9 +732,22 @@ export function startWorkPoller(
 
       // ── Terminal report ─────────────────────────────────
       if (handlerResult.status === "success") {
-        const rep = await reportComplete(ctx, handlerResult.output, handlerResult.artifacts);
-        if (rep.accepted) { result = "success"; detail = "completed"; }
-        else { result = "failure"; detail = `completion rejected: ${rep.reason}`; }
+        const rep = await reportComplete(ctx, handlerResult);
+        if (rep.accepted) {
+          result = "success";
+          detail = "completed";
+          if (onPublished) {
+            try {
+              await onPublished(ctx.publicRun, handlerResult);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              detail = `completed; local projection failed: ${message.slice(0, 200)}`;
+            }
+          }
+        } else {
+          result = "failure";
+          detail = `completion rejected: ${rep.reason}`;
+        }
       } else {
         const rep = await reportFailure(ctx, handlerResult.code, handlerResult.message, handlerResult.retryable);
         result = "failure";

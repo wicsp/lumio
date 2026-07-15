@@ -12,6 +12,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -23,11 +24,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { createHash } from "node:crypto";
-import type { RunRecord, HandlerResult, ArtifactRefCreate } from "../work";
+import { join } from "node:path";
+import type {
+  ArtifactRefCreate,
+  HandlerResult,
+  ResourceGenerator,
+  RunRecord,
+} from "../work";
 
 // ─── Configuration ───────────────────────────────────────────────────
 
@@ -36,9 +40,6 @@ const SKILL_DIR = join(__dirname, "..", "..", "..", "skills", "bilibili-video-su
 
 /** Browser to extract cookies from. */
 const COOKIE_BROWSER = process.env.BILIBILI_COOKIE_BROWSER ?? "dia";
-
-/** Directory for persistent artifacts (transcripts, summaries). */
-const ARTIFACT_ROOT = process.env.ATLAS_ARTIFACT_ROOT?.trim() || null;
 
 /** B站 common headers. */
 const BILI_HEADERS = {
@@ -51,6 +52,8 @@ const BILI_HEADERS = {
 
 export interface BilibiliRunInput {
   url: string;
+  source_id: string;
+  canonical_url?: string;
   lang?: string;
   cookie_browser?: "dia" | "chrome";
 }
@@ -68,6 +71,25 @@ export interface BilibiliRunOutput {
   /** 0 = no transcript; 1 = transcript fetched; 2 = transcript + AI summary */
   processing_level: number;
 }
+
+export interface BilibiliSummaryRequest {
+  bvid: string;
+  url: string;
+  title: string;
+  description: string;
+  transcript: string;
+}
+
+export interface BilibiliSummaryResult {
+  markdown: string;
+  generator: ResourceGenerator;
+  metadata: Record<string, unknown>;
+}
+
+export type BilibiliSummaryGenerator = (
+  request: BilibiliSummaryRequest,
+  signal: AbortSignal,
+) => Promise<BilibiliSummaryResult>;
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -229,27 +251,29 @@ async function fetchTranscript(
   }
 }
 
-/**
- * Persist transcript as an artifact file with a content hash.
- * Returns an ArtifactRefCreate for Atlas.
- */
-export function storeTranscriptArtifact(
-  transcriptPath: string,
-  bvid: string,
-): ArtifactRefCreate {
-  if (!ARTIFACT_ROOT) {
-    throw new Error("ATLAS_ARTIFACT_ROOT must be configured for transcript storage");
+function artifactRoot(): string {
+  const root = process.env.ATLAS_ARTIFACT_ROOT?.trim();
+  if (!root) {
+    throw new Error("ATLAS_ARTIFACT_ROOT must be configured for content storage");
   }
-  const content = readFileSync(transcriptPath, "utf-8");
-  const hash = createHash("sha256").update(content).digest("hex");
+  return root;
+}
 
-  // Store under artifact root: <root>/atlas/transcripts/<bvid>/<hash>.txt
-  const dir = join(ARTIFACT_ROOT, "transcripts", bvid);
+function storeTextArtifact(
+  content: string,
+  directory: string,
+  bvid: string,
+  name: string,
+  extension: ".txt" | ".md",
+  contentType: string,
+): ArtifactRefCreate {
+  const hash = createHash("sha256").update(content).digest("hex");
+  const dir = join(artifactRoot(), directory, bvid);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
 
-  const destPath = join(dir, `${hash.slice(0, 16)}.txt`);
+  const destPath = join(dir, `${hash.slice(0, 16)}${extension}`);
   if (!existsSync(destPath)) {
-    const tempPath = join(dir, `.${hash.slice(0, 16)}.${randomUUID()}.tmp`);
+    const tempPath = join(dir, `.${hash.slice(0, 16)}.${randomUUID()}${extension}.tmp`);
     let fd: number | null = null;
     try {
       fd = openSync(tempPath, "wx", 0o600);
@@ -275,12 +299,51 @@ export function storeTranscriptArtifact(
   const sizeBytes = Buffer.byteLength(content, "utf-8");
 
   return {
-    name: `transcript-${bvid}`,
+    name,
     uri,
-    content_type: "text/plain; charset=utf-8",
+    content_type: contentType,
     size_bytes: sizeBytes,
     checksum: `sha256:${hash}`,
   };
+}
+
+/** Persist a fetched transcript as a content-addressed external ArtifactRef. */
+export function storeTranscriptArtifact(
+  transcriptPath: string,
+  bvid: string,
+): ArtifactRefCreate {
+  return storeTextArtifact(
+    readFileSync(transcriptPath, "utf-8"),
+    "transcripts",
+    bvid,
+    `transcript-${bvid}`,
+    ".txt",
+    "text/plain; charset=utf-8",
+  );
+}
+
+/** Persist an AI summary as a content-addressed Markdown ArtifactRef. */
+export function storeSummaryArtifact(markdown: string, bvid: string): ArtifactRefCreate {
+  return storeTextArtifact(
+    markdown,
+    join("resources", "bilibili"),
+    bvid,
+    `summary-${bvid}`,
+    ".md",
+    "text/markdown; charset=utf-8",
+  );
+}
+
+/** Stable Resource identity for one Source, kind, and immutable content hash. */
+export function createResourceId(
+  sourceId: string,
+  kind: "transcript" | "summary",
+  contentHash: string,
+): string {
+  const digest = createHash("sha256")
+    .update(`${sourceId}\0${kind}\0${contentHash}`)
+    .digest("hex");
+  return `res_${digest.slice(0, 32)}`;
 }
 
 /**
@@ -303,6 +366,7 @@ function cleanup(cookieFile: string | null) {
 export async function bilibiliSummaryHandler(
   run: RunRecord,
   signal: AbortSignal,
+  summarize?: BilibiliSummaryGenerator,
 ): Promise<HandlerResult> {
   const input = run.input as BilibiliRunInput;
   const url = input?.url;
@@ -312,6 +376,23 @@ export async function bilibiliSummaryHandler(
       code: "invalid_input",
       message: "Missing required field: url",
       retryable: false,
+    };
+  }
+  const sourceId = input?.source_id?.trim();
+  if (!sourceId) {
+    return {
+      status: "failure",
+      code: "invalid_input",
+      message: "Missing required field: source_id",
+      retryable: false,
+    };
+  }
+  if (!summarize) {
+    return {
+      status: "failure",
+      code: "summary_model_unavailable",
+      message: "No Pi summary model is available for this session.",
+      retryable: true,
     };
   }
 
@@ -349,53 +430,124 @@ export async function bilibiliSummaryHandler(
     // Step 3: Fetch transcript.
     const transcriptPath = await fetchTranscript(url, cookieFile, lang, signal);
 
-    // Step 4: Persist transcript as external artifact.
-    let artifacts: ArtifactRefCreate[] = [];
-    let transcriptLength = 0;
-    let processingLevel = 0;
-
-    if (transcriptPath) {
-      try {
-        const art = storeTranscriptArtifact(transcriptPath, bvid);
-        artifacts.push(art);
-        transcriptLength = art.size_bytes ?? 0;
-        processingLevel = 1;
-      } finally {
-        // Always clean up temp transcript file.
-        try { unlinkSync(transcriptPath); } catch { /* ignore */ }
-      }
-    }
-
-    // Check if we got anything useful.
-    const gotMetadata = info !== null && (info.title || info.description);
-    const gotTranscript = transcriptLength > 0;
-
-    if (!gotMetadata && !gotTranscript) {
+    if (!transcriptPath) {
       return {
         status: "failure",
-        code: "no_content",
-        message: `No metadata or transcript extracted for ${bvid}`,
+        code: "transcript_unavailable",
+        message: `No subtitle transcript is available for ${bvid}`,
         retryable: false,
       };
     }
 
+    let transcript = "";
+    let transcriptArtifact: ArtifactRefCreate;
+    try {
+      transcript = readFileSync(transcriptPath, "utf-8");
+      if (!transcript.trim()) {
+        return {
+          status: "failure",
+          code: "empty_transcript",
+          message: `Subtitle transcript for ${bvid} is empty`,
+          retryable: false,
+        };
+      }
+      transcriptArtifact = storeTranscriptArtifact(transcriptPath, bvid);
+    } finally {
+      try { unlinkSync(transcriptPath); } catch { /* ignore */ }
+    }
+
+    const title = boundedText(info?.title || bvid, 1000);
+    const canonicalUrl = input.canonical_url?.trim()
+      || `https://www.bilibili.com/video/${bvid}`;
+
+    let summary: BilibiliSummaryResult;
+    try {
+      summary = await summarize({
+        bvid,
+        url: canonicalUrl,
+        title,
+        description: boundedText(info?.description ?? "", 5000),
+        transcript,
+      }, signal);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        status: "failure",
+        code: "summary_failed",
+        message: `AI summary failed for ${bvid}: ${message.slice(0, 500)}`,
+        retryable: true,
+      };
+    }
+
+    const summaryMarkdown = summary.markdown.trim();
+    if (!summaryMarkdown) {
+      return {
+        status: "failure",
+        code: "empty_summary",
+        message: `AI model returned an empty summary for ${bvid}`,
+        retryable: true,
+      };
+    }
+    const summaryArtifact = storeSummaryArtifact(`${summaryMarkdown}\n`, bvid);
+    const transcriptHash = requiredChecksum(transcriptArtifact);
+    const summaryHash = requiredChecksum(summaryArtifact);
+
     // Build bounded output (no transcript text).
     const output: BilibiliRunOutput = {
       bvid,
-      url,
-      title: info?.title ?? "",
-      description: info?.description ?? "",
+      url: canonicalUrl,
+      title,
+      description: boundedText(info?.description ?? "", 5000),
       duration_text: info?.duration_text ?? "",
       cover_url: info?.cover_url ?? "",
       page_count: info?.page_count ?? 1,
-      transcript_length: transcriptLength,
-      processing_level: processingLevel,
+      transcript_length: transcriptArtifact.size_bytes ?? Buffer.byteLength(transcript),
+      processing_level: 2,
     };
 
     return {
       status: "success",
       output: output as unknown as Record<string, unknown>,
-      artifacts,
+      artifacts: [transcriptArtifact, summaryArtifact],
+      source_updates: [{
+        source_id: sourceId,
+        canonical_uri: canonicalUrl,
+        title,
+        external_ids: { bvid },
+        metadata: {
+          description: boundedText(info?.description ?? "", 5000),
+          duration_text: info?.duration_text ?? "",
+          cover_url: info?.cover_url ?? "",
+          page_count: info?.page_count ?? 1,
+        },
+      }],
+      resources: [
+        {
+          resource_id: createResourceId(sourceId, "transcript", transcriptHash),
+          source_id: sourceId,
+          kind: "transcript",
+          title: `${title} — transcript`,
+          artifact_name: transcriptArtifact.name,
+          content_hash: transcriptHash,
+          generator: {
+            mode: "deterministic",
+            name: "lumio-bilibili-transcript",
+            version: "1",
+          },
+          metadata: { language: lang },
+        },
+        {
+          resource_id: createResourceId(sourceId, "summary", summaryHash),
+          source_id: sourceId,
+          kind: "summary",
+          title: `${title} — AI summary`,
+          artifact_name: summaryArtifact.name,
+          content_hash: summaryHash,
+          generator: summary.generator,
+          metadata: summary.metadata,
+        },
+      ],
     };
   } finally {
     cleanup(cookieFile);
@@ -406,6 +558,18 @@ export async function bilibiliSummaryHandler(
 function extractBvid(url: string): string | null {
   const m = url.match(/BV[a-zA-Z0-9]{10}/);
   return m ? m[0] : null;
+}
+
+function requiredChecksum(artifact: ArtifactRefCreate): string {
+  if (!artifact.checksum?.match(/^sha256:[0-9a-f]{64}$/)) {
+    throw new Error(`Artifact ${artifact.name} is missing a SHA-256 checksum`);
+  }
+  return artifact.checksum;
+}
+
+function boundedText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 1)}…`;
 }
 
 // ─── Re-export for index.ts ──────────────────────────────────────────

@@ -11,7 +11,8 @@
  *   - Handler signature uses typed HandlerResult instead of raw strings.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
   parseConfig,
   createClient,
@@ -28,14 +29,26 @@ import {
   type WorkStatus,
   type RunRecord,
   type HandlerResult,
+  type HandlerSuccess,
+  type ArtifactRef,
 } from "./work";
-import { bilibiliSummaryHandler } from "./jobs/bilibili";
+import { bilibiliSummaryHandler, extractBvid } from "./jobs/bilibili";
+import {
+  configuredVaultPath,
+  createKnowledgeCommentDraft,
+  ensureVaultStructure,
+  projectResourceCard,
+  type AtlasResourceRecord,
+  type AtlasSourceRecord,
+} from "./obsidian";
+import { createPiBilibiliSummaryGenerator } from "./summarize";
 
 // ─── Module state ────────────────────────────────────────────────────
 
 let client: AtlasClient | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let workPoller: WorkPoller | null = null;
+let summaryRuntime: { model: Model<any>; modelRegistry: ModelRegistry } | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const REGISTRATION_TIMEOUT_MS = 5_000;
@@ -88,6 +101,61 @@ export function registerJobHandler(
   jobHandlers.set(name, handler);
 }
 
+interface AtlasResourceBundle {
+  resource: AtlasResourceRecord;
+  source: AtlasSourceRecord;
+  artifact: ArtifactRef;
+}
+
+async function fetchResourceBundle(
+  c: AtlasClient,
+  resourceId: string,
+): Promise<AtlasResourceBundle> {
+  const response = await c.controlGet<AtlasResourceBundle>(
+    `/api/resources/${encodeURIComponent(resourceId)}/bundle`,
+  );
+  if (!response.ok) throw new Error(response.error);
+  return response.data;
+}
+
+async function projectBundle(bundle: AtlasResourceBundle): Promise<string | null> {
+  const vaultPath = configuredVaultPath();
+  if (!vaultPath || bundle.resource.kind !== "summary") return null;
+  return projectResourceCard(vaultPath, {
+    ...bundle.resource,
+    artifact_uri: bundle.artifact.uri,
+    source_uri: bundle.source.canonical_uri,
+  });
+}
+
+async function projectPublishedResources(
+  c: AtlasClient,
+  _run: RunRecord,
+  result: HandlerSuccess,
+): Promise<void> {
+  if (!configuredVaultPath()) return;
+  for (const resource of result.resources) {
+    if (resource.kind !== "summary") continue;
+    await projectBundle(await fetchResourceBundle(c, resource.resource_id));
+  }
+}
+
+async function syncPendingResourceCards(c: AtlasClient): Promise<number> {
+  const vaultPath = configuredVaultPath();
+  if (!vaultPath) throw new Error("ATLAS_OBSIDIAN_VAULT is not configured");
+  await ensureVaultStructure(vaultPath);
+  const response = await c.controlGet<AtlasResourceRecord[]>(
+    "/api/resources?kind=summary&review_status=pending&limit=500",
+  );
+  if (!response.ok) throw new Error(response.error);
+  let projected = 0;
+  for (const resource of response.data) {
+    const path = await projectBundle(await fetchResourceBundle(c, resource.resource_id));
+    if (path) projected += 1;
+  }
+  return projected;
+}
+
 /**
  * Dispatch a claimed run to the appropriate handler.
  * M2.5: unknown jobs are explicitly failed instead of silently succeeding.
@@ -124,6 +192,7 @@ function startWorkPolling(c: AtlasClient, ui: { setStatus: (k: string, v: string
     (ws) => {
       ui.setStatus("atlas-work", compactWorkStatus(ws));
     },
+    (run, result) => projectPublishedResources(c, run, result),
   );
 }
 
@@ -197,7 +266,7 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
     agent_id: c.agentId,
     name: generateAgentName(c.config),
     capabilities: Array.from(jobHandlers.keys()),
-    metadata: buildMetadata(c.config),
+    metadata: buildMetadata(c.config, c.agentId.split(".").at(-1)),
   };
 
   const result = await c.register(payload);
@@ -208,7 +277,11 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
 
 export default function atlasExtension(pi: ExtensionAPI) {
   // ── Register job handlers ────────────────────────────────────
-  registerJobHandler("bilibili-summary", bilibiliSummaryHandler);
+  const summarize = createPiBilibiliSummaryGenerator(() => summaryRuntime);
+  registerJobHandler(
+    "bilibili-summary-v3",
+    (run, signal) => bilibiliSummaryHandler(run, signal, summarize),
+  );
 
   // ── /atlas enqueue command ───────────────────────────────────
   pi.registerCommand("atlas:enqueue", {
@@ -225,59 +298,123 @@ export default function atlasExtension(pi: ExtensionAPI) {
         return;
       }
 
-      // Validate URL contains BV号
-      if (!url.match(/BV[a-zA-Z0-9]{10}/)) {
+      const bvid = extractBvid(url);
+      if (!bvid) {
         ctx.ui.notify("Invalid B站 URL — must contain a BV号 (e.g. BV1xx411c7mD).", "warning");
         return;
       }
 
       try {
-        // Ensure bilibili-capture project exists.
-        await fetch(
-          `${client.config.url.replace(/\/+$/, "")}/api/projects`,
+        const canonicalUrl = `https://www.bilibili.com/video/${bvid}`;
+        const source = await client.controlPost<AtlasSourceRecord>(
+          "/api/sources",
           {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${client.config.token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              project_id: "bilibili-capture",
-              name: "Bilibili Video Capture",
-              description: "Inbox for B站 video URLs captured from Share Sheet.",
-            }),
-          },
-        ).catch(() => null);
-
-        // M2.5: set capabilities_required so only matching agents claim this run.
-        const resp = await fetch(
-          `${client.config.url.replace(/\/+$/, "")}/api/runs/enqueue`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${client.config.token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              project_id: "bilibili-capture",
-              job_name: "bilibili-summary",
-              capabilities_required: ["bilibili-summary"],
-              input: { url },
-              priority: 5,
-            }),
+            source_key: `bilibili:${bvid}`,
+            kind: "video",
+            canonical_uri: canonicalUrl,
+            title: null,
+            external_ids: { bvid },
+            metadata: { captured_via: "lumio", capture_url: url },
           },
         );
-        if (resp.ok) {
-          const data = await resp.json() as any;
+        if (!source.ok) {
+          ctx.ui.notify(`Atlas Source capture failed: ${source.error}`, "warning");
+          return;
+        }
+
+        // Ensure bilibili-capture project exists.
+        await client.controlPost("/api/projects", {
+          project_id: "bilibili-capture",
+          name: "Bilibili Video Capture",
+          description: "Inbox for B站 video URLs captured from Share Sheet.",
+        });
+
+        const enqueued = await client.controlPost<RunRecord>("/api/runs/enqueue", {
+          project_id: "bilibili-capture",
+          job_name: "bilibili-summary-v3",
+          capabilities_required: ["bilibili-summary-v3"],
+          input: {
+            url,
+            canonical_url: canonicalUrl,
+            source_id: source.data.source_id,
+          },
+          priority: 5,
+        });
+        if (enqueued.ok) {
           ctx.ui.notify(
-            `Atlas: enqueued ${data.run_id} — agent will process shortly.`,
+            `Atlas: captured ${bvid} as ${source.data.source_id}; enqueued ${enqueued.data.run_id}.`,
             "info",
           );
         } else {
-          ctx.ui.notify(`Atlas enqueue failed: HTTP ${resp.status}`, "warning");
+          ctx.ui.notify(`Atlas enqueue failed: ${enqueued.error}`, "warning");
         }
       } catch (err) {
         ctx.ui.notify(`Atlas enqueue error: ${err instanceof Error ? err.message : String(err)}`, "warning");
+      }
+    },
+  });
+
+  pi.registerCommand("atlas:sync", {
+    description: "Rebuild pending Atlas AI Resource Cards in Vortex Next",
+    handler: async (_args, ctx) => {
+      if (!client) {
+        ctx.ui.notify("Atlas is not connected.", "warning");
+        return;
+      }
+      try {
+        const count = await syncPendingResourceCards(client);
+        ctx.ui.notify(`Atlas: projected ${count} pending Resource Card(s).`, "info");
+      } catch (err) {
+        ctx.ui.notify(
+          `Atlas Resource sync failed: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
+      }
+    },
+  });
+
+  pi.registerCommand("atlas:comment", {
+    description: "Create a blank human Knowledge Comment for one Atlas Resource",
+    handler: async (args, ctx) => {
+      const resourceId = args.trim();
+      if (!resourceId) {
+        ctx.ui.notify("Usage: /atlas:comment <resource_id>", "warning");
+        return;
+      }
+      const vaultPath = configuredVaultPath();
+      if (!client || !vaultPath) {
+        ctx.ui.notify("Atlas or ATLAS_OBSIDIAN_VAULT is not configured.", "warning");
+        return;
+      }
+      try {
+        const bundle = await fetchResourceBundle(client, resourceId);
+        const draft = await createKnowledgeCommentDraft(vaultPath, bundle.resource);
+        const registered = await client.controlPost("/api/knowledge-refs", {
+          note_id: draft.note_id,
+          uri: draft.uri,
+          source_ids: [bundle.source.source_id],
+          resource_ids: [bundle.resource.resource_id],
+        });
+        if (!registered.ok) {
+          ctx.ui.notify(
+            `Comment file exists, but Atlas KnowledgeRef registration failed: ${registered.error}`,
+            "warning",
+          );
+          return;
+        }
+        await client.controlPatch(
+          `/api/resources/${encodeURIComponent(resourceId)}/review`,
+          { review_status: "reviewed" },
+        );
+        ctx.ui.notify(
+          `${draft.created ? "Created" : "Kept existing"} ${draft.relative_path}. Write the comment yourself in Obsidian.`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui.notify(
+          `Atlas comment setup failed: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
       }
     },
   });
@@ -316,6 +453,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
     // Clean up any previous session's resources.
     stopHeartbeat();
     client = null;
+    summaryRuntime = null;
 
     const config = parseConfig();
     if (!config) {
@@ -323,7 +461,22 @@ export default function atlasExtension(pi: ExtensionAPI) {
       return;
     }
 
-    client = createClient(config);
+    summaryRuntime = ctx.model
+      ? { model: ctx.model, modelRegistry: ctx.modelRegistry }
+      : null;
+    client = createClient(config, ctx.sessionManager.getSessionId());
+
+    const vaultPath = configuredVaultPath();
+    if (vaultPath) {
+      try {
+        await ensureVaultStructure(vaultPath);
+      } catch (err) {
+        ctx.ui.notify(
+          `Vortex Next bootstrap failed: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
+      }
+    }
 
     // Register with a short timeout; failure is non-blocking.
     try {
@@ -357,9 +510,14 @@ export default function atlasExtension(pi: ExtensionAPI) {
     }
   });
 
+  pi.on("model_select", (event, ctx) => {
+    summaryRuntime = { model: event.model, modelRegistry: ctx.modelRegistry };
+  });
+
   pi.on("session_shutdown", () => {
     stopWorkPolling();
     stopHeartbeat();
     client = null;
+    summaryRuntime = null;
   });
 }

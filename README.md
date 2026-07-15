@@ -78,8 +78,17 @@ pi -e <path-to-lumio>
 - Lumio dirty repo guard：在有未提交变更时，切换会话或 fork 前请求确认。
 - Lumio minimal footer：替换默认 footer，显示 branch、repo、context、model、thinking level，并在上下文过大时提示 `DUMB ZONE`。
 - Lumio quiet tools：覆盖内置 `bash/read/grep/find/ls/edit/write` 的 TUI renderer，让折叠工具行只显示一行调用和展开提示，不改变模型可见的工具结果。
-- Gnosis、Librarian、Oracle、review、triage、todo、questionnaire 和 workflow audit 等本地工具与命令。
+- Gnosis、Librarian、Oracle、review、triage、questionnaire 和 workflow audit 等本地工具与命令。
+- Atlas RFC 0003：把 Bilibili 捕获处理为可追踪的 Source/Resource，并将机器生成的摘要投影到 Vortex Next；`/atlas:comment` 只创建空白的人类评论模板。
 - Bark 与桌面/终端完成通知。
+
+### Atlas / Vortex Next 工作流
+
+- `/atlas:enqueue <Bilibili URL>`：先在 Atlas 幂等创建 Source，再排队执行摘要 Run。
+- `/atlas:sync`：从 Atlas 读取待审阅 summary Resource，校验 Artifact hash 后重建 `Resources/Cards/`。
+- `/atlas:comment <resource_id>`：显式创建一个不会被自动覆盖的空白 `Knowledge/Comments/` 笔记，并向 Atlas 登记 metadata-only KnowledgeRef。
+
+`Resources/**` 是机器生成的投影，可以重建；`Knowledge/**` 只写本人负责的内容。摘要正文和 transcript 不进入 Atlas SQLite，也不进入 Run output。
 
 ## 迁移来源
 
@@ -90,3 +99,4 @@ pi -e <path-to-lumio>
 - 不把第三方 pi 插件加入本项目运行时依赖。
 - 需要外部功能时，先研究其实现，再在 Lumio 内按需重写。
 - 保持每个功能独立、轻量、可删除。
+- 不维护通用 Todo：Plan mode 的步骤只服务于当前会话，持久可执行事项以后由 Atlas WorkItem 负责。

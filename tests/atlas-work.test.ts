@@ -52,6 +52,9 @@ function client(): AtlasClient {
     register: async () => ({ ok: false, error: "unused" }),
     heartbeat: async () => ({ ok: false, error: "unused" }),
     status: async () => ({ kind: "disconnected", reason: "unused" }),
+    controlGet: async () => ({ ok: false, status: 0, error: "unused" }),
+    controlPost: async () => ({ ok: false, status: 0, error: "unused" }),
+    controlPatch: async () => ({ ok: false, status: 0, error: "unused" }),
   };
 }
 
@@ -135,7 +138,7 @@ test("ambiguous completion first response lost, second succeeds — same idempot
     const poller = startWorkPoller(
       client(),
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
-      async () => ({ status: "success", output: {}, artifacts: [] }),
+      async () => ({ status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }),
     );
     await waitFor(() => completeAttempts >= 2);
     poller.stop();
@@ -188,7 +191,7 @@ test("heartbeat sends attempt_id and claim_token", async () => {
     const poller = startWorkPoller(
       client(),
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
-      async () => ({ status: "success", output: {}, artifacts: [] }),
+      async () => ({ status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }),
     );
     await waitFor(() => hbAttemptId !== "" && hbClaimToken !== "");
     poller.stop();
@@ -232,7 +235,7 @@ test("heartbeat network failure then success within lease — handler not aborte
         await sleep(4000);
         handlerExitedCleanly = !handlerAborted && !signal.aborted;
         handlerFinished = true;
-        return { status: "success", output: {}, artifacts: [] };
+        return { status: "success", output: {}, artifacts: [], source_updates: [], resources: [] };
       },
     );
     await waitFor(() => hbSucceeded && handlerFinished, 10_000);
@@ -359,6 +362,66 @@ test("complete and fail carry attempt_id and claim_token", async () => {
   }
 });
 
+test("v3 completion carries Source updates and Resources before projection", async () => {
+  const originalFetch = globalThis.fetch;
+  let claimed = false;
+  let completionBody: Record<string, any> | null = null;
+  let projected = false;
+  const run = makeRun();
+
+  globalThis.fetch = async (input: any, init?: any) => {
+    const url = input as string;
+    if (!claimed) { claimed = true; return Response.json(run); }
+    if (url.includes("/heartbeat")) {
+      return Response.json({ ...run, lease_expires_at: run.lease_expires_at });
+    }
+    if (url.includes("/complete")) {
+      completionBody = JSON.parse(init?.body ?? "{}");
+      return Response.json({ ...run, status: "completed" });
+    }
+    return Response.json(run);
+  };
+
+  try {
+    const poller = startWorkPoller(
+      client(),
+      { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
+      async () => ({
+        status: "success",
+        output: { bounded: true },
+        artifacts: [{ name: "summary", uri: "file:///summary.md" }],
+        source_updates: [{ source_id: "src_one", title: "title" }],
+        resources: [{
+          resource_id: `res_${"a".repeat(32)}`,
+          source_id: "src_one",
+          kind: "summary",
+          title: "summary",
+          artifact_name: "summary",
+          content_hash: `sha256:${"a".repeat(64)}`,
+          generator: {
+            mode: "ai",
+            name: "test",
+            version: "1",
+            model_provider: "test",
+            model_id: "test",
+            prompt_version: "test-v1",
+          },
+          metadata: {},
+        }],
+      }),
+      undefined,
+      async () => { projected = true; },
+    );
+    await waitFor(() => projected);
+    poller.stop();
+    assert.deepEqual(completionBody?.source_updates, [{ source_id: "src_one", title: "title" }]);
+    assert.equal(completionBody?.resources[0].artifact_name, "summary");
+    assert.equal(completionBody?.output.bounded, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("stop() aborts handler and leaves no stale callbacks", async () => {
   const originalFetch = globalThis.fetch;
   let claimed = false;
@@ -420,7 +483,7 @@ test("missing attempt_id/claim_token/lease in claim response is protocol error a
     const poller = startWorkPoller(
       client(),
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
-      async () => { handlerCalled = true; return { status: "success", output: {}, artifacts: [] }; },
+      async () => { handlerCalled = true; return { status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }; },
     );
     await sleep(1000);
     poller.stop();
@@ -564,7 +627,7 @@ test("terminal report retries stop at lease deadline, no late requests", async (
     const poller = startWorkPoller(
       client(),
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
-      async () => ({ status: "success", output: {}, artifacts: [] }),
+      async () => ({ status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }),
     );
 
     // Wait for abandoned status (deadline-fired).
@@ -607,7 +670,7 @@ test("claim_token is NOT present in handler run or status callbacks", async () =
     const poller = startWorkPoller(
       client(),
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
-      async (r) => { handlerRun = r; return { status: "success", output: {}, artifacts: [] }; },
+      async (r) => { handlerRun = r; return { status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }; },
       (ws) => { if (ws.kind === "claimed") statusRun = ws.run; },
     );
     await waitFor(() => handlerRun !== null && statusRun !== null, 5_000);
@@ -656,7 +719,7 @@ test("continuous heartbeat renewal extends lease past original deadline", async 
         await sleep(1500);
         handlerExitedCleanly = !handlerAborted && !signal.aborted;
         handlerFinished = true;
-        return { status: "success", output: {}, artifacts: [] };
+        return { status: "success", output: {}, artifacts: [], source_updates: [], resources: [] };
       },
     );
     await waitFor(() => handlerFinished, 5_000);
@@ -702,7 +765,7 @@ test("heartbeat single-flight — only one in-flight heartbeat at a time", async
       // Use a short heartbeat interval so the interval timer fires while the immediate
       // heartbeat is still blocked.
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 200, leaseSafetyMarginMs: 0 },
-      async () => ({ status: "success", output: {}, artifacts: [] }),
+      async () => ({ status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }),
     );
 
     // Wait for the immediate heartbeat to start and block.
@@ -746,7 +809,7 @@ test("stop during claim request does not start handler", async () => {
     const poller = startWorkPoller(
       client(),
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
-      async () => { handlerCalled = true; return { status: "success", output: {}, artifacts: [] }; },
+      async () => { handlerCalled = true; return { status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }; },
     );
 
     // Wait for poll to have started the claim request.
@@ -795,7 +858,7 @@ test("stale in-flight heartbeat after normal completion does not produce callbac
     const poller = startWorkPoller(
       client(),
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
-      async () => ({ status: "success", output: {}, artifacts: [] }),
+      async () => ({ status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }),
       (ws) => { callbacks.push(ws.kind); },
     );
 
@@ -858,7 +921,7 @@ test("heartbeat 409 during complete does not override accepted completion", asyn
     const poller = startWorkPoller(
       client(),
       { pollIntervalMs: 60_000, heartbeatIntervalMs: 60_000, leaseSafetyMarginMs: 0 },
-      async () => ({ status: "success", output: {}, artifacts: [] }),
+      async () => ({ status: "success", output: {}, artifacts: [], source_updates: [], resources: [] }),
       (ws) => { statuses.push(ws.kind); },
     );
 
