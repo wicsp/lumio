@@ -1,11 +1,11 @@
 ---
 name: bilibili-video-summary
-description: Summarize B站 (Bilibili) videos by extracting AI-generated subtitles. Handles cookie-based authentication from Dia or Chrome browsers, WBI signing, multi-part videos, and transcript extraction. Use when the user shares a B站 video URL and wants a summary or analysis of its content. Falls back to video download + audio extraction when no subtitles are available.
+description: Summarize B站 (Bilibili) videos with a subtitle-first pipeline and bounded local whisper.cpp ASR fallback. Handles optional Dia/Chrome cookies, WBI signing, provenance, and private temporary media. Use when the user shares a B站 video URL and wants a summary or analysis of its content.
 ---
 
 # B站视频总结 (Bilibili Video Summary)
 
-总结B站视频：自动从浏览器提取登录态 → 获取AI字幕 → 拼接文本 → 交给模型总结。
+总结B站视频：尝试浏览器登录态（失败时匿名继续）→ 优先获取平台字幕 → 无字幕时下载音频并用本地 whisper.cpp 转写 → 交给模型总结。
 
 ## 前置依赖
 
@@ -16,7 +16,12 @@ cd skills/bilibili-video-summary
 uv sync
 ```
 
-可选的 ASR fallback 才需要外部视频/音频工具，例如 `yt-dlp`、`you-get`、`ffmpeg`。不要默认安装这些工具；缺失时告知用户即可。
+Atlas 的 `bilibili-summary-v4` ASR fallback 需要 `yt-dlp`、`ffmpeg`、`whisper-cli` 和 multilingual `small` 模型。它们由 macsp 的 `nix-config` 声明；模型是可重建缓存，不进入 Git。若模型不存在，运行：
+
+```bash
+mkdir -p "$HOME/Library/Caches/Lumio/asr/whisper"
+whisper-cpp-download-ggml-model small "$HOME/Library/Caches/Lumio/asr/whisper"
+```
 
 ## 应用场景与工作流程
 
@@ -88,20 +93,16 @@ uv run python scripts/fetch_subtitle.py <B站链接或BV号> -c /tmp/bilibili_co
 
 ### Fallback: 无字幕时
 
-当视频没有 AI 字幕时（常见于老视频或未开启字幕功能的视频），走视频下载路径：
+`bilibili-summary-v4` 自动执行以下受限流程，不需要手动拼接 shell 命令：
 
 ```bash
-# 方案A：you-get（推荐，能绕过大部分反爬）
-you-get --no-caption -o /tmp/ -O bilibili_video "https://www.bilibili.com/video/BVxxxxxx/"
-
-# 方案B：yt-dlp
-yt-dlp --cookies-from-browser chrome -f "best[height<=720]" -o "/tmp/bilibili_video.mp4" "https://www.bilibili.com/video/BVxxxxxx/"
-
-# 提取音频
-ffmpeg -y -i /tmp/bilibili_video.mp4 -vn -acodec libmp3lame -q:a 5 /tmp/bilibili_audio.mp3
-
-# 交给 Gemini 或其他 ASR 分析
+yt-dlp bestaudio -> ffmpeg PCM s16le/16kHz/mono -> whisper.cpp JSON -> transcript Resource
 ```
+
+- 默认最长 7200 秒，可用 `BILIBILI_ASR_MAX_DURATION_SECONDS` 收紧。
+- 多 P 视频在没有平台字幕时会明确失败，避免只处理第一 P 却产生误导性摘要。
+- 下载的音频、WAV 和 whisper JSON 只保存在任务临时目录，成功、失败或取消后都会清理。
+- Atlas 只记录转写来源、语言、引擎/模型和外部 transcript ArtifactRef，不保存原始媒体。
 
 ### 稍后再看管理
 
@@ -123,10 +124,9 @@ uv run python scripts/watch_later.py delete --all -c /tmp/bilibili_cookies.txt
 
 技术实现细节（字幕链路、API 端点、Cookie 解密、WBI 签名）见 `TECHNICAL.md`——排查脚本问题时按需读取。
 
-- **必须登录**：B站 AI 字幕接口在未登录时返回空列表，必须从浏览器提取 SESSDATA
-- **登录过期**：如果字幕接口突然返回空，可能是 cookie 过期，重新运行 Step 1
+- **Cookie 是增强而非硬依赖**：登录态可提高字幕和受限媒体的可用性；公共视频会在提取失败时匿名继续。
+- **登录过期**：如果原本可见的字幕突然回退到 ASR，可重新运行 Step 1 排查 cookie。
 - **Python 环境**：在 `skills/bilibili-video-summary` 下使用 `uv sync` 初始化，之后用 `uv run python ...` 运行脚本
 - **BV 号格式**：传给 `--bvid` 的值必须保留 `BV` 前缀，例如 `BV1sE7h6VESd`
 - **凭证清理**：总结完成后删除本次生成的 `/tmp/bilibili_cookies.txt`，不要把内容打印到模型上下文或写入仓库
-- **yt-dlp B站 412 问题**（2026年7月）：B站更新了 WBI sign 算法，yt-dlp 暂未跟进，建议优先用 you-get 下载视频
-- **you-get 不支持字幕提取**：只能用于下载视频本身，字幕仍需通过 API 获取
+- **资源边界**：字幕和 ASR 结果都是机器生成的 Resource，不会自动成为 Knowledge Comment。

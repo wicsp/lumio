@@ -313,7 +313,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
   // ── Register job handlers ────────────────────────────────────
   const summarize = createPiBilibiliSummaryGenerator(() => summaryRuntime);
   registerJobHandler(
-    "bilibili-summary-v3",
+    "bilibili-summary-v4",
     (run, signal) => bilibiliSummaryHandler(run, signal, summarize),
   );
   registerJobHandler("vortex-comment-v1", (run, signal) => {
@@ -377,8 +377,8 @@ export default function atlasExtension(pi: ExtensionAPI) {
 
         const enqueued = await client.controlPost<RunRecord>("/api/runs/enqueue", {
           project_id: "bilibili-capture",
-          job_name: "bilibili-summary-v3",
-          capabilities_required: ["bilibili-summary-v3"],
+          job_name: "bilibili-summary-v4",
+          capabilities_required: ["bilibili-summary-v4"],
           input: {
             url,
             canonical_url: canonicalUrl,
