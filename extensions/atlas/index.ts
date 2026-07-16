@@ -30,14 +30,11 @@ import {
   type RunRecord,
   type HandlerResult,
   type HandlerSuccess,
-  type ArtifactRef,
 } from "./work";
 import { bilibiliSummaryHandler, extractBvid } from "./jobs/bilibili";
 import {
   configuredVaultPath,
-  createKnowledgeCommentDraft,
   ensureVaultStructure,
-  projectResourceCard,
   removeResourceCard,
   type ResourceCardProjection,
   type ResourceCardRemoval,
@@ -45,6 +42,13 @@ import {
   type AtlasSourceRecord,
 } from "./obsidian";
 import { createPiBilibiliSummaryGenerator } from "./summarize";
+import {
+  createResourceComment,
+  fetchResourceBundle,
+  projectResourceBundle,
+  vortexCommentHandler,
+  type AtlasResourceBundle,
+} from "./resource-review";
 
 // ─── Module state ────────────────────────────────────────────────────
 
@@ -104,33 +108,6 @@ export function registerJobHandler(
   jobHandlers.set(name, handler);
 }
 
-interface AtlasResourceBundle {
-  resource: AtlasResourceRecord;
-  source: AtlasSourceRecord;
-  artifact: ArtifactRef;
-}
-
-async function fetchResourceBundle(
-  c: AtlasClient,
-  resourceId: string,
-): Promise<AtlasResourceBundle> {
-  const response = await c.controlGet<AtlasResourceBundle>(
-    `/api/resources/${encodeURIComponent(resourceId)}/bundle`,
-  );
-  if (!response.ok) throw new Error(response.error);
-  return response.data;
-}
-
-async function projectBundle(bundle: AtlasResourceBundle): Promise<ResourceCardProjection | null> {
-  const vaultPath = configuredVaultPath();
-  if (!vaultPath || bundle.resource.kind !== "summary") return null;
-  return projectResourceCard(vaultPath, {
-    ...bundle.resource,
-    artifact_uri: bundle.artifact.uri,
-    source_uri: bundle.source.canonical_uri,
-  });
-}
-
 async function projectPublishedResources(
   c: AtlasClient,
   _run: RunRecord,
@@ -139,7 +116,7 @@ async function projectPublishedResources(
   if (!configuredVaultPath()) return;
   for (const resource of result.resources) {
     if (resource.kind !== "summary") continue;
-    await projectBundle(await fetchResourceBundle(c, resource.resource_id));
+    await projectResourceBundle(await fetchResourceBundle(c, resource.resource_id));
   }
 }
 
@@ -187,7 +164,7 @@ export async function reconcileResourceCards(
           `/api/resources/${encodeURIComponent(resource.resource_id)}/bundle`,
         );
         if (!bundleResponse.ok) throw new Error(bundleResponse.error);
-        const projection = await projectBundle(bundleResponse.data);
+        const projection = await projectResourceBundle(bundleResponse.data);
         if (projection) result[projection.action] += 1;
       } catch (error) {
         result.failed += 1;
@@ -339,6 +316,18 @@ export default function atlasExtension(pi: ExtensionAPI) {
     "bilibili-summary-v3",
     (run, signal) => bilibiliSummaryHandler(run, signal, summarize),
   );
+  registerJobHandler("vortex-comment-v1", (run, signal) => {
+    const activeClient = client;
+    if (!activeClient) {
+      return Promise.resolve({
+        status: "failure" as const,
+        code: "atlas_unavailable",
+        message: "Atlas client is not available in this Lumio session",
+        retryable: true,
+      });
+    }
+    return vortexCommentHandler(run, signal, activeClient);
+  });
 
   // ── /atlas enqueue command ───────────────────────────────────
   pi.registerCommand("atlas:enqueue", {
@@ -447,44 +436,9 @@ export default function atlasExtension(pi: ExtensionAPI) {
         return;
       }
       try {
-        const bundle = await fetchResourceBundle(client, resourceId);
-        const draft = await createKnowledgeCommentDraft(vaultPath, bundle.resource);
-        const registered = await client.controlPost("/api/knowledge-refs", {
-          note_id: draft.note_id,
-          uri: draft.uri,
-          source_ids: [bundle.source.source_id],
-          resource_ids: [bundle.resource.resource_id],
-        });
-        if (!registered.ok) {
-          ctx.ui.notify(
-            `Comment file exists, but Atlas KnowledgeRef registration failed: ${registered.error}`,
-            "warning",
-          );
-          return;
-        }
-        const reviewed = await client.controlPatch<AtlasResourceRecord>(
-          `/api/resources/${encodeURIComponent(resourceId)}/review`,
-          { review_status: "reviewed" },
-        );
-        if (!reviewed.ok) {
-          ctx.ui.notify(
-            `Comment registered, but Atlas review update failed: ${reviewed.error}`,
-            "warning",
-          );
-          return;
-        }
-        let projection: ResourceCardProjection | null;
-        try {
-          projection = await projectBundle({ ...bundle, resource: reviewed.data });
-        } catch (err) {
-          ctx.ui.notify(
-            `Comment registered and Resource reviewed, but card projection failed: ${err instanceof Error ? err.message : String(err)}`,
-            "warning",
-          );
-          return;
-        }
+        const result = await createResourceComment(client, resourceId, { vaultPath });
         ctx.ui.notify(
-          `${draft.created ? "Created" : "Kept existing"} ${draft.relative_path}; Resource is reviewed${projection ? ` and card ${projection.action}` : ""}. Write the comment yourself in Obsidian.`,
+          `${result.draft.created ? "Created" : "Kept existing"} ${result.draft.relative_path}; Resource is reviewed${result.projection ? ` and card ${result.projection.action}` : ""}. Write the comment yourself in Obsidian.`,
           "info",
         );
       } catch (err) {
@@ -572,7 +526,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
         if (restored.data.kind === "summary" && configuredVaultPath()) {
           try {
             const bundle = await fetchResourceBundle(client, resourceId);
-            projection = await projectBundle({ ...bundle, resource: restored.data });
+            projection = await projectResourceBundle({ ...bundle, resource: restored.data });
           } catch (err) {
             ctx.ui.notify(
               `Atlas restored ${resourceId} to pending, but card projection failed: ${err instanceof Error ? err.message : String(err)}. Reconciliation will retry it.`,

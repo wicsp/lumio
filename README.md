@@ -79,7 +79,7 @@ pi -e <path-to-lumio>
 - Lumio minimal footer：替换默认 footer，显示 branch、repo、context、model、thinking level，并在上下文过大时提示 `DUMB ZONE`。
 - Lumio quiet tools：覆盖内置 `bash/read/grep/find/ls/edit/write` 的 TUI renderer，让折叠工具行只显示一行调用和展开提示，不改变模型可见的工具结果。
 - Gnosis、Librarian、Oracle、review、triage、questionnaire 和 workflow audit 等本地工具与命令。
-- Atlas RFC 0003：把 Bilibili 捕获处理为可追踪的 Source/Resource，并将机器生成的摘要投影到 Vortex；`/atlas:comment` 只创建空白的人类评论模板。
+- Atlas RFC 0003/0004：把 Bilibili 捕获处理为可追踪的 Source/Resource，并将机器生成的摘要投影到 Vortex；Console 请求的 `vortex-comment-v1` 和 `/atlas:comment` 共用同一套空白人类评论流程。
 - Bark 与桌面/终端完成通知。
 
 ### Atlas / Vortex 工作流
@@ -88,6 +88,7 @@ pi -e <path-to-lumio>
 - Pi 会在 Atlas 注册成功后自动 reconciliation：读取全部 summary Resource，校验 Artifact hash，投影 `pending`/`reviewed` 卡片，并移除 `dismissed` 卡片。内容无变化时不会改写文件。
 - `/atlas:reconcile`：手动执行同一套全量 reconciliation，并报告 created、updated、removed、unchanged 和 failed 数量。
 - `/atlas:comment <resource_id>`：显式创建一个不会被自动覆盖的空白 `Knowledge/Comments/` 笔记，登记 metadata-only KnowledgeRef，将 Resource 标为 `reviewed`，并立即刷新卡片状态。
+- Atlas Console 的 `写评论` 会排队 `vortex-comment-v1`；任一在线 Mac Lumio 领取后执行与 `/atlas:comment` 相同的幂等流程，并把进度报告给 Console。
 - `/atlas:dismiss <resource_id>`：将没有 KnowledgeRef 的 Resource 标为 `dismissed`，并只删除可重建的 Resource Card。
 - `/atlas:restore <resource_id>`：将 dismissed Resource 恢复为 `pending`，并重建 Resource Card。
 
