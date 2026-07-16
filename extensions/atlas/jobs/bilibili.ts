@@ -733,6 +733,9 @@ export async function runLocalAsr(
           mode: "ai",
           name: "whisper.cpp",
           version: "1",
+          model_provider: "local",
+          model_id: `whisper.cpp/${modelName}`,
+          prompt_version: "audio-transcription-v1",
         },
         metadata: {
           acquisition_mode: "local_asr",
