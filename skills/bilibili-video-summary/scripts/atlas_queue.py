@@ -171,7 +171,9 @@ def cmd_list(cookies: dict[str, str], folder_name: str, as_json: bool) -> None:
         print(f"     {item['bvid']}  UP: {item['owner']}")
 
 
-def cmd_cleanup(cookies: dict[str, str], folder_name: str, bvid: str) -> None:
+def cleanup_video(
+    cookies: dict[str, str], folder_name: str, bvid: str
+) -> dict[str, str]:
     if not re.fullmatch(r"BV[a-zA-Z0-9]{10}", bvid):
         raise BilibiliApiError("invalid BV identifier")
     folder = resolve_folder(cookies, folder_name)
@@ -186,8 +188,7 @@ def cmd_cleanup(cookies: dict[str, str], folder_name: str, bvid: str) -> None:
     )
     aid_value = (favorite or {}).get("id") or (later or {}).get("aid")
     if aid_value is None:
-        print(json.dumps({"bvid": bvid, "favorite": "absent", "watch_later": "absent"}))
-        return
+        return {"bvid": bvid, "favorite": "absent", "watch_later": "absent"}
     aid = int(aid_value)
     favorite_status = "absent"
     watch_later_status = "absent"
@@ -197,15 +198,15 @@ def cmd_cleanup(cookies: dict[str, str], folder_name: str, bvid: str) -> None:
     if later is not None:
         remove_from_watch_later(cookies, aid)
         watch_later_status = "removed"
-    print(
-        json.dumps(
-            {
-                "bvid": bvid,
-                "favorite": favorite_status,
-                "watch_later": watch_later_status,
-            }
-        )
-    )
+    return {
+        "bvid": bvid,
+        "favorite": favorite_status,
+        "watch_later": watch_later_status,
+    }
+
+
+def cmd_cleanup(cookies: dict[str, str], folder_name: str, bvid: str) -> None:
+    print(json.dumps(cleanup_video(cookies, folder_name, bvid)))
 
 
 def main() -> None:

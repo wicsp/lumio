@@ -146,6 +146,22 @@ uv run python scripts/atlas_queue.py cleanup -c /tmp/bilibili_cookies.txt --bvid
 
 收藏夹名称必须精确且唯一。自动化只允许逐条清理，不调用 `watch_later.py delete --all`。
 
+### 夜间控制器
+
+`nightly_atlas_queue.py` 是 RFC 0006 的一次性控制器，由 `nix-config` 的 macOS LaunchAgent
+在 02:00 启动。它会临时启动 Pi RPC/headless executor，复用 `bilibili-summary-v4`，并只在
+Atlas 能读到与当前 Run 匹配的 summary Resource 后调用逐条清理。不要把它改成第二套总结
+实现，也不要把外部删除放进 summary handler。
+
+```bash
+# 通常由 launchd 调用；手动验收时也使用同一入口
+uv run python scripts/nightly_atlas_queue.py
+```
+
+已有 summary Resource 的 Source 不会重新总结，只会重试幂等清理。已有 failed/cancelled
+Run 且没有 summary Resource 时保持原视频并要求人工重试，避免每晚重复消耗模型和 ASR。
+Mac 处于睡眠时，日历任务可能推迟到下次唤醒。
+
 ## 注意事项
 
 技术实现细节（字幕链路、API 端点、Cookie 解密、WBI 签名）见 `TECHNICAL.md`——排查脚本问题时按需读取。

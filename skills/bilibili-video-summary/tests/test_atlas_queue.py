@@ -57,7 +57,8 @@ class AtlasQueueTests(unittest.TestCase):
         with patch.object(atlas_queue, "resolve_folder", return_value={"id": 99}), patch.object(
             atlas_queue, "list_folder_items", return_value=[]
         ), patch.object(atlas_queue, "list_watch_later", return_value=[]), redirect_stdout(output):
-            atlas_queue.cmd_cleanup({}, "Atlas", "BV1xx411c7mD")
+            result = atlas_queue.cleanup_video({}, "Atlas", "BV1xx411c7mD")
+            print(json.dumps(result))
         self.assertEqual(
             json.loads(output.getvalue()),
             {"bvid": "BV1xx411c7mD", "favorite": "absent", "watch_later": "absent"},
@@ -66,6 +67,33 @@ class AtlasQueueTests(unittest.TestCase):
     def test_cleanup_rejects_noncanonical_identifier(self) -> None:
         with self.assertRaises(atlas_queue.BilibiliApiError):
             atlas_queue.cmd_cleanup({}, "Atlas", "not-a-bvid")
+
+    def test_cleanup_removes_watch_later_when_favorite_is_already_absent(self) -> None:
+        later = {"aid": 7, "bvid": "BV1xx411c7mD", "title": "video"}
+        with patch.object(atlas_queue, "resolve_folder", return_value={"id": 99}), patch.object(
+            atlas_queue, "list_folder_items", return_value=[]
+        ), patch.object(atlas_queue, "list_watch_later", return_value=[later]), patch.object(
+            atlas_queue, "remove_from_folder"
+        ) as remove_favorite, patch.object(
+            atlas_queue, "remove_from_watch_later"
+        ) as remove_later:
+            result = atlas_queue.cleanup_video({}, "Atlas", "BV1xx411c7mD")
+        remove_favorite.assert_not_called()
+        remove_later.assert_called_once_with({}, 7)
+        self.assertEqual(result["favorite"], "absent")
+        self.assertEqual(result["watch_later"], "removed")
+
+    def test_cleanup_stops_after_failed_favorite_mutation(self) -> None:
+        favorite = {"id": 7, "bvid": "BV1xx411c7mD", "title": "video"}
+        later = {"aid": 7, "bvid": "BV1xx411c7mD", "title": "video"}
+        with patch.object(atlas_queue, "resolve_folder", return_value={"id": 99}), patch.object(
+            atlas_queue, "list_folder_items", return_value=[favorite]
+        ), patch.object(atlas_queue, "list_watch_later", return_value=[later]), patch.object(
+            atlas_queue, "remove_from_folder", side_effect=atlas_queue.BilibiliApiError("failed")
+        ), patch.object(atlas_queue, "remove_from_watch_later") as remove_later:
+            with self.assertRaises(atlas_queue.BilibiliApiError):
+                atlas_queue.cleanup_video({}, "Atlas", "BV1xx411c7mD")
+        remove_later.assert_not_called()
 
 
 if __name__ == "__main__":

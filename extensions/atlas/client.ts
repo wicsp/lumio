@@ -106,7 +106,9 @@ export function generateAgentId(config: AtlasConfig, piSessionId: string): strin
 }
 
 export function generateAgentName(config: AtlasConfig): string {
-  return `Lumio pi session on ${config.nodeId}`;
+  return process.env.LUMIO_AGENT_MODE === "background"
+    ? `Lumio background pi on ${config.nodeId}`
+    : `Lumio pi session on ${config.nodeId}`;
 }
 
 // ─── Metadata ────────────────────────────────────────────────────────
@@ -116,9 +118,10 @@ export function buildMetadata(
   config: AtlasConfig,
   instanceId?: string,
 ): Record<string, unknown> {
+  const background = process.env.LUMIO_AGENT_MODE === "background";
   return {
     node_id: config.nodeId,
-    agent_kind: "interactive",
+    agent_kind: background ? "background" : "interactive",
     executor: "lumio",
     runtime: "pi",
     instance_id: instanceId ?? null,
@@ -126,7 +129,7 @@ export function buildMetadata(
     lumio_version: _lumioVersion(),
     git_revision: _lumioRevision(),
     protocol_version: "atlas-agent-v3",
-    interactive: true,
+    interactive: !background,
   };
 }
 

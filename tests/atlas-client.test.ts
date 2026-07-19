@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   createClient,
+  buildMetadata,
   generateAgentId,
+  generateAgentName,
   type AtlasConfig,
 } from "../extensions/atlas/client";
 
@@ -18,6 +20,22 @@ test("agent identity is one Lumio executor using Pi's real session instance", ()
     generateAgentId(config, "12345678-abcd-ef00-1122-334455667788"),
     "macsp.lumio.12345678abcdef00",
   );
+});
+
+test("headless queue executor is visible as one background Lumio agent", () => {
+  const previous = process.env.LUMIO_AGENT_MODE;
+  process.env.LUMIO_AGENT_MODE = "background";
+  try {
+    assert.equal(generateAgentName(config), "Lumio background pi on macsp");
+    const metadata = buildMetadata(config, "nightly");
+    assert.equal(metadata.agent_kind, "background");
+    assert.equal(metadata.interactive, false);
+    assert.equal(metadata.executor, "lumio");
+    assert.equal(metadata.runtime, "pi");
+  } finally {
+    if (previous === undefined) delete process.env.LUMIO_AGENT_MODE;
+    else process.env.LUMIO_AGENT_MODE = previous;
+  }
 });
 
 test("Lumio refuses an Atlas server that does not acknowledge v3", async () => {
