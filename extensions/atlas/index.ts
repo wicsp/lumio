@@ -60,6 +60,7 @@ let summaryRuntime: { model: Model<any>; modelRegistry: ModelRegistry } | null =
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const REGISTRATION_TIMEOUT_MS = 5_000;
+export const ATLAS_WORK_POLL_INTERVAL_MS = 2_000;
 
 // ─── Heartbeat loop ──────────────────────────────────────────────────
 
@@ -220,7 +221,7 @@ function startWorkPolling(c: AtlasClient, ui: { setStatus: (k: string, v: string
     c,
     {
       capabilities,
-      pollIntervalMs: 10_000,
+      pollIntervalMs: ATLAS_WORK_POLL_INTERVAL_MS,
       heartbeatIntervalMs: 15_000,
     },
     dispatchJob,
