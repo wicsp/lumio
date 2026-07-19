@@ -49,6 +49,7 @@ import {
   vortexCommentHandler,
   type AtlasResourceBundle,
 } from "./resource-review";
+import { vortexResourcePurgeHandler } from "./resource-purge";
 
 // ─── Module state ────────────────────────────────────────────────────
 
@@ -328,6 +329,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
     }
     return vortexCommentHandler(run, signal, activeClient);
   });
+  registerJobHandler("vortex-resource-purge-v1", vortexResourcePurgeHandler);
 
   // ── /atlas enqueue command ───────────────────────────────────
   pi.registerCommand("atlas:enqueue", {
