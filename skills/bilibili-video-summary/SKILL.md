@@ -25,7 +25,7 @@ whisper-cpp-download-ggml-model small "$HOME/Library/Caches/Lumio/asr/whisper"
 
 ## 应用场景与工作流程
 
-本 skill 支持三种使用场景：
+本 skill 支持四种使用场景：
 
 ### 场景 1：直接链接总结
 
@@ -56,6 +56,20 @@ uv run python scripts/watch_later.py delete 3 -c /tmp/bilibili_cookies.txt
 1. 先 `list` 展示全量，让用户确认
 2. 确认后逐条 `fetch_subtitle.py` → 总结（79 个视频约 80+ 次 API 调用，分批处理，中途暂停让用户确认是否继续）
 3. 全部完成后 `watch_later.py delete --all --yes`
+
+### 场景 4：Atlas 收藏夹自动队列
+
+`Atlas` 收藏夹是无人值守采集队列，不需要模型判断视频是否属于知识类：用户把希望处理的视频明确收藏到这里即可。
+
+```bash
+# 只读列出队列
+uv run python scripts/atlas_queue.py list -c /tmp/bilibili_cookies.txt --json
+
+# 仅在 Atlas 已确认 summary Resource 发布成功后，清理单个视频
+uv run python scripts/atlas_queue.py cleanup -c /tmp/bilibili_cookies.txt --bvid BV1sE7h6VESd
+```
+
+`cleanup` 会分别从 `Atlas` 收藏夹和「稍后再看」移除该视频；某一处已经不存在时仍视为成功。脚本没有批量清空命令。总结、Resource 发布或验证失败时不得调用清理。
 
 ## 脚本用法
 
@@ -119,6 +133,18 @@ uv run python scripts/watch_later.py delete --bvid BV1sE7h6VESd -c /tmp/bilibili
 # 删除全部（会交互确认，加 --yes 跳过）
 uv run python scripts/watch_later.py delete --all -c /tmp/bilibili_cookies.txt
 ```
+
+### Atlas 收藏夹队列
+
+```bash
+# 精确查找名为 Atlas 的收藏夹，并列出所有分页内容
+uv run python scripts/atlas_queue.py list -c /tmp/bilibili_cookies.txt --json
+
+# 成功发布后，幂等清理一个 BV 号（Atlas 收藏夹 + 稍后再看）
+uv run python scripts/atlas_queue.py cleanup -c /tmp/bilibili_cookies.txt --bvid BV1sE7h6VESd
+```
+
+收藏夹名称必须精确且唯一。自动化只允许逐条清理，不调用 `watch_later.py delete --all`。
 
 ## 注意事项
 
