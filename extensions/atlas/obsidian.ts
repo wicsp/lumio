@@ -212,8 +212,7 @@ export async function createKnowledgeCommentDraft(
   resource: AtlasResourceRecord,
 ): Promise<KnowledgeCommentDraft> {
   await ensureVaultStructure(vaultPath);
-  const date = new Date().toISOString().slice(0, 10);
-  const relativePath = `Knowledge/Comments/${date}-${resource.resource_id}.md`;
+  const relativePath = `Knowledge/Comments/${resource.resource_id}.md`;
   const absolutePath = join(vaultPath, ...relativePath.split("/"));
   const noteId = relativePath.replace(/\.md$/, "");
   const uri = obsidianUri(vaultPath, noteId);
@@ -293,12 +292,16 @@ async function withMutationQueue<T>(path: string, fn: () => Promise<T>): Promise
   return withFileMutationQueue(path, fn);
 }
 
-function obsidianUri(vaultPath: string, noteId: string): string {
+export function obsidianUri(vaultPath: string, noteId: string): string {
   const params = new URLSearchParams({
     vault: basename(vaultPath),
     file: noteId,
   });
   return `obsidian://open?${params.toString()}`;
+}
+
+export function resourceCardUri(vaultPath: string, resourceId: string): string {
+  return obsidianUri(vaultPath, resourceCardRelativePath(resourceId).replace(/\.md$/, ""));
 }
 
 function yamlString(value: string): string {

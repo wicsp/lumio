@@ -36,6 +36,7 @@ import {
   configuredVaultPath,
   ensureVaultStructure,
   removeResourceCard,
+  resourceCardUri,
   type ResourceCardProjection,
   type ResourceCardRemoval,
   type AtlasResourceRecord,
@@ -43,6 +44,7 @@ import {
 } from "./obsidian";
 import { createPiBilibiliSummaryGenerator } from "./summarize";
 import {
+  completeResourceComment,
   createResourceComment,
   fetchResourceBundle,
   projectResourceBundle,
@@ -50,6 +52,8 @@ import {
   type AtlasResourceBundle,
 } from "./resource-review";
 import { vortexResourcePurgeHandler } from "./resource-purge";
+import { generateDailyReviewDigest, generateWeeklyAudit } from "./digests";
+import { createComparisonHandler } from "./comparison";
 
 // ─── Module state ────────────────────────────────────────────────────
 
@@ -117,7 +121,7 @@ async function projectPublishedResources(
 ): Promise<void> {
   if (!configuredVaultPath()) return;
   for (const resource of result.resources) {
-    if (resource.kind !== "summary") continue;
+    if (resource.kind !== "summary" && resource.kind !== "comparison") continue;
     await projectResourceBundle(await fetchResourceBundle(c, resource.resource_id));
   }
 }
@@ -131,6 +135,24 @@ export interface ResourceCardReconciliation {
   errors: string[];
 }
 
+interface AtlasKnowledgeRefRecord {
+  resource_ids: string[];
+}
+
+function resourceProfileId(resource: AtlasResourceRecord): string {
+  const declared = resource.metadata.profile_id;
+  if (typeof declared === "string" && declared.trim()) return declared.trim();
+  const generator = resource.generator;
+  return [
+    resource.kind,
+    generator.name,
+    generator.version,
+    generator.model_provider ?? "deterministic",
+    generator.model_id ?? "deterministic",
+    generator.prompt_version ?? "deterministic",
+  ].join(":");
+}
+
 /** Make the rebuildable Resource Card projection match Atlas' current review metadata. */
 export async function reconcileResourceCards(
   c: Pick<AtlasClient, "controlGet">,
@@ -138,10 +160,29 @@ export async function reconcileResourceCards(
   const vaultPath = configuredVaultPath();
   if (!vaultPath) throw new Error("ATLAS_OBSIDIAN_VAULT is not configured");
   await ensureVaultStructure(vaultPath);
-  const response = await c.controlGet<AtlasResourceRecord[]>(
-    "/api/resources?kind=summary&limit=500",
-  );
+  const [response, knowledgeResponse] = await Promise.all([
+    c.controlGet<AtlasResourceRecord[]>("/api/resources?kind=summary&limit=500"),
+    c.controlGet<AtlasKnowledgeRefRecord[]>("/api/knowledge-refs?limit=500"),
+  ]);
   if (!response.ok) throw new Error(response.error);
+  if (!knowledgeResponse.ok) throw new Error(knowledgeResponse.error);
+
+  const referenced = new Set(knowledgeResponse.data.flatMap((item) => item.resource_ids));
+  const currentBySlot = new Map<string, AtlasResourceRecord>();
+  for (const resource of response.data) {
+    if (resource.review_status === "dismissed") continue;
+    const slot = `${resource.source_id}\0${resourceProfileId(resource)}`;
+    const current = currentBySlot.get(slot);
+    if (!current || resource.created_at > current.created_at || (
+      resource.created_at === current.created_at && resource.resource_id > current.resource_id
+    )) {
+      currentBySlot.set(slot, resource);
+    }
+  }
+  const projected = new Set([
+    ...[...currentBySlot.values()].map((resource) => resource.resource_id),
+    ...referenced,
+  ]);
 
   const result: ResourceCardReconciliation = {
     created: 0,
@@ -157,7 +198,7 @@ export async function reconcileResourceCards(
     while (cursor < response.data.length) {
       const resource = response.data[cursor++];
       try {
-        if (resource.review_status === "dismissed") {
+        if (resource.review_status === "dismissed" || !projected.has(resource.resource_id)) {
           const removal = await removeResourceCard(vaultPath, resource.resource_id);
           result[removal.removed ? "removed" : "unchanged"] += 1;
           continue;
@@ -331,6 +372,10 @@ export default function atlasExtension(pi: ExtensionAPI) {
     return vortexCommentHandler(run, signal, activeClient);
   });
   registerJobHandler("vortex-resource-purge-v1", vortexResourcePurgeHandler);
+  registerJobHandler(
+    "vortex-comparison-v1",
+    createComparisonHandler(() => client, () => summaryRuntime),
+  );
 
   // ── /atlas enqueue command ───────────────────────────────────
   pi.registerCommand("atlas:enqueue", {
@@ -426,7 +471,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("atlas:comment", {
-    description: "Create a blank human Knowledge Comment for one Atlas Resource",
+    description: "Create and open a local Knowledge Comment draft; keep the Resource pending",
     handler: async (args, ctx) => {
       const resourceId = args.trim();
       if (!resourceId) {
@@ -440,13 +485,42 @@ export default function atlasExtension(pi: ExtensionAPI) {
       }
       try {
         const result = await createResourceComment(client, resourceId, { vaultPath });
+        await pi.exec("open", [resourceCardUri(vaultPath, resourceId)], { timeout: 5_000 });
+        await pi.exec("open", [result.draft.uri], { timeout: 5_000 });
         ctx.ui.notify(
-          `${result.draft.created ? "Created" : "Kept existing"} ${result.draft.relative_path}; Resource is reviewed${result.projection ? ` and card ${result.projection.action}` : ""}. Write the comment yourself in Obsidian.`,
+          `${result.draft.created ? "Created" : "Opened existing"} ${result.draft.relative_path}; Resource remains pending until /atlas:complete-comment ${resourceId}.`,
           "info",
         );
       } catch (err) {
         ctx.ui.notify(
           `Atlas comment setup failed: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
+      }
+    },
+  });
+
+  pi.registerCommand("atlas:complete-comment", {
+    description: "Register a finished local Knowledge Comment and mark its Resource reviewed",
+    handler: async (args, ctx) => {
+      const resourceId = args.trim();
+      if (!resourceId) {
+        ctx.ui.notify("Usage: /atlas:complete-comment <resource_id>", "warning");
+        return;
+      }
+      if (!client) {
+        ctx.ui.notify("Atlas is not connected.", "warning");
+        return;
+      }
+      try {
+        const result = await completeResourceComment(client, resourceId);
+        ctx.ui.notify(
+          `Atlas: ${resourceId} reviewed${result.projection ? `; Resource Card ${result.projection.action}` : ""}.`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui.notify(
+          `Atlas comment completion failed: ${err instanceof Error ? err.message : String(err)}`,
           "warning",
         );
       }
@@ -551,6 +625,74 @@ export default function atlasExtension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("atlas:digest", {
+    description: "Generate today's deterministic Atlas review digest in Vortex",
+    handler: async (_args, ctx) => {
+      const vaultPath = configuredVaultPath();
+      if (!client || !vaultPath) {
+        ctx.ui.notify("Atlas or ATLAS_OBSIDIAN_VAULT is not configured.", "warning");
+        return;
+      }
+      try {
+        const result = await generateDailyReviewDigest(client, vaultPath);
+        ctx.ui.notify(`Atlas digest ${result.action}: ${result.relative_path}.`, "info");
+      } catch (err) {
+        ctx.ui.notify(`Atlas digest failed: ${err instanceof Error ? err.message : String(err)}`, "warning");
+      }
+    },
+  });
+
+  pi.registerCommand("atlas:audit", {
+    description: "Generate a deterministic weekly Atlas/Vortex integrity audit",
+    handler: async (_args, ctx) => {
+      const vaultPath = configuredVaultPath();
+      if (!client || !vaultPath) {
+        ctx.ui.notify("Atlas or ATLAS_OBSIDIAN_VAULT is not configured.", "warning");
+        return;
+      }
+      try {
+        const result = await generateWeeklyAudit(client, vaultPath);
+        ctx.ui.notify(`Atlas audit ${result.action}: ${result.relative_path}.`, "info");
+      } catch (err) {
+        ctx.ui.notify(`Atlas audit failed: ${err instanceof Error ? err.message : String(err)}`, "warning");
+      }
+    },
+  });
+
+  pi.registerCommand("atlas:compare", {
+    description: "Enqueue an explicit friction comparison against written Knowledge Comments",
+    handler: async (args, ctx) => {
+      const resourceId = args.trim();
+      if (!/^res_[A-Za-z0-9._-]{8,120}$/.test(resourceId)) {
+        ctx.ui.notify("Usage: /atlas:compare <resource_id>", "warning");
+        return;
+      }
+      if (!client) {
+        ctx.ui.notify("Atlas is not connected.", "warning");
+        return;
+      }
+      try {
+        await client.controlPost("/api/projects", {
+          project_id: "resource-review",
+          name: "Resource Review",
+          description: "Human-requested review and comparison work.",
+        });
+        const enqueued = await client.controlPost<RunRecord>("/api/runs/enqueue", {
+          project_id: "resource-review",
+          job_name: "vortex-comparison-v1",
+          capabilities_required: ["vortex-comparison-v1"],
+          input: { resource_id: resourceId },
+          priority: 20,
+          metadata: { requested_via: "lumio-command" },
+        });
+        if (!enqueued.ok) throw new Error(enqueued.error);
+        ctx.ui.notify(`Atlas comparison enqueued: ${enqueued.data.run_id}.`, "info");
+      } catch (err) {
+        ctx.ui.notify(`Atlas comparison failed: ${err instanceof Error ? err.message : String(err)}`, "warning");
+      }
+    },
+  });
+
   // ── /atlas command ─────────────────────────────────────────────
   pi.registerCommand("atlas", {
     description: "Show Atlas connection and agent status",
@@ -622,6 +764,8 @@ export default function atlasExtension(pi: ExtensionAPI) {
             const result = await reconcileResourceCards(client);
             reconciliationText = `; Vortex ${formatReconciliation(result)}`;
             reconciliationFailed = result.failed > 0;
+            await generateDailyReviewDigest(client, vaultPath);
+            if (new Date().getDay() === 0) await generateWeeklyAudit(client, vaultPath);
           } catch (err) {
             reconciliationFailed = true;
             reconciliationText = `; Vortex reconciliation failed: ${err instanceof Error ? err.message : String(err)}`;

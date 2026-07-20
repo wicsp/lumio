@@ -242,7 +242,9 @@ test("v4 handler publishes bounded ASR provenance without transcript bytes in Ru
     },
   );
   assert.equal(result.resources[0].metadata.acquisition_mode, "local_asr");
+  assert.equal(result.resources[0].metadata.profile_id, "bilibili-transcript-v1");
   assert.equal(result.resources[1].metadata.transcript_acquisition_mode, "local_asr");
+  assert.equal(result.resources[1].metadata.profile_id, "bilibili-overview-v1");
 
   const transcriptPath = result.artifacts[0].uri.replace(/^file:\/\//, "");
   assert.equal(readFileSync(transcriptPath, "utf-8"), `${secretTranscript}\n`);

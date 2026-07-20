@@ -36,6 +36,17 @@ export class ResourceCommentError extends Error {
 
 type ReviewClient = Pick<AtlasClient, "controlGet" | "controlPost" | "controlPatch">;
 
+interface CommentCompleteResponse {
+  resource: AtlasResourceRecord;
+  knowledge_ref: {
+    knowledge_ref_id: string;
+    note_id: string;
+    uri: string;
+    source_ids: string[];
+    resource_ids: string[];
+  };
+}
+
 function checkAbort(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new ResourceCommentError("cancelled", "Comment setup was cancelled", false);
@@ -79,7 +90,7 @@ export async function projectResourceBundle(
   bundle: AtlasResourceBundle,
   vaultPath = configuredVaultPath(),
 ): Promise<ResourceCardProjection | null> {
-  if (!vaultPath || bundle.resource.kind !== "summary") return null;
+  if (!vaultPath || !["summary", "comparison"].includes(bundle.resource.kind)) return null;
   return projectResourceCard(vaultPath, {
     ...bundle.resource,
     artifact_uri: bundle.artifact.uri,
@@ -88,10 +99,10 @@ export async function projectResourceBundle(
 }
 
 /**
- * Converge the explicit human-comment setup workflow.
+ * Create only the local human-owned draft. The Resource deliberately remains
+ * pending until completeResourceComment is called by an explicit human action.
  *
- * Every step is idempotent: the draft is never overwritten, KnowledgeRef is an
- * upsert, the review transition can be replayed, and projection is content-aware.
+ * Draft creation is idempotent and never overwrites existing human prose.
  */
 export async function createResourceComment(
   client: ReviewClient,
@@ -133,46 +144,45 @@ export async function createResourceComment(
   }
 
   checkAbort(options.signal);
-  const registered = await client.controlPost("/api/knowledge-refs", {
-    note_id: draft.note_id,
-    uri: draft.uri,
-    source_ids: [bundle.source.source_id],
-    resource_ids: [bundle.resource.resource_id],
-  });
-  if (!registered.ok) {
-    throw atlasError("KnowledgeRef registration", registered);
-  }
-
-  checkAbort(options.signal);
-  const reviewed = await client.controlPatch<AtlasResourceRecord>(
-    `/api/resources/${encodeURIComponent(resourceId)}/review`,
-    { review_status: "reviewed" },
-  );
-  if (!reviewed.ok) {
-    throw atlasError("Resource review update", reviewed, "resource_not_found");
-  }
-
-  checkAbort(options.signal);
   let projection: ResourceCardProjection | null;
   try {
-    projection = await projectResourceBundle(
-      { ...bundle, resource: reviewed.data },
-      vaultPath,
-    );
+    projection = await projectResourceBundle(bundle, vaultPath);
   } catch {
     throw new ResourceCommentError(
       "card_projection_failed",
-      "Comment registered and Resource reviewed, but Resource Card projection failed",
+      "Comment draft was created, but Resource Card projection failed",
       true,
     );
   }
 
   return {
-    resource: reviewed.data,
+    resource: bundle.resource,
     source: bundle.source,
     draft,
     projection,
   };
+}
+
+/** Register only metadata and mark the Resource reviewed after human completion. */
+export async function completeResourceComment(
+  client: ReviewClient,
+  resourceId: string,
+  vaultPath = configuredVaultPath(),
+): Promise<{ resource: AtlasResourceRecord; projection: ResourceCardProjection | null }> {
+  if (!/^res_[A-Za-z0-9._-]{8,120}$/.test(resourceId)) {
+    throw new ResourceCommentError("invalid_input", "Invalid Resource ID", false);
+  }
+  const completed = await client.controlPost<CommentCompleteResponse>(
+    "/api/review-actions/complete-comment",
+    { resource_id: resourceId },
+  );
+  if (!completed.ok) throw atlasError("Comment completion", completed, "resource_not_found");
+  const bundle = await fetchResourceBundle(client, resourceId);
+  const projection = await projectResourceBundle(
+    { ...bundle, resource: completed.data.resource },
+    vaultPath,
+  );
+  return { resource: completed.data.resource, projection };
 }
 
 export async function vortexCommentHandler(
@@ -197,7 +207,7 @@ export async function vortexCommentHandler(
       output: {
         resource_id: result.resource.resource_id,
         source_id: result.source.source_id,
-        review_status: result.resource.review_status,
+        review_status: "pending",
         note_id: result.draft.note_id,
         note_uri: result.draft.uri,
         note_created: result.draft.created,

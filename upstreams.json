@@ -87,7 +87,7 @@
           "extensions/review/triage-comments.ts"
         ]
       },
-      "lastCheckedRef": "d2b409a4"
+      "lastCheckedRef": "a9eaebd8"
     },
     {
       "id": "mitsuhiko/agent-stuff",
@@ -102,7 +102,7 @@
           "extensions/review/review.ts"
         ]
       },
-      "lastCheckedRef": "4bce4556"
+      "lastCheckedRef": "cc4b711d"
     }
   ]
 }

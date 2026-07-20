@@ -87,10 +87,15 @@ pi -e <path-to-lumio>
 - `/atlas:enqueue <Bilibili URL>`：先在 Atlas 幂等创建 Source，再排队执行摘要 Run。
 - Pi 会在 Atlas 注册成功后自动 reconciliation：读取全部 summary Resource，校验 Artifact hash，投影 `pending`/`reviewed` 卡片，并移除 `dismissed` 卡片。内容无变化时不会改写文件。
 - `/atlas:reconcile`：手动执行同一套全量 reconciliation，并报告 created、updated、removed、unchanged 和 failed 数量。
-- `/atlas:comment <resource_id>`：显式创建一个不会被自动覆盖的空白 `Knowledge/Comments/` 笔记，登记 metadata-only KnowledgeRef，将 Resource 标为 `reviewed`，并立即刷新卡片状态。
-- Atlas Console 的 `写评论` 会排队 `vortex-comment-v1`；任一在线 Mac Lumio 领取后执行与 `/atlas:comment` 相同的幂等流程，并把进度报告给 Console。
+- `/atlas:comment <resource_id>`：本地创建稳定路径的空白 `Knowledge/Comments/<resource_id>.md`，连续打开 Resource 与 Comment；此时 Resource 仍为 `pending`。
+- `/atlas:complete-comment <resource_id>`：人工写完后只向 Atlas 登记 metadata-only KnowledgeRef，将 Resource 标为 `reviewed`，再刷新卡片状态；评论正文不会上传。
+- Atlas Console 的 `写评论` 直接通过 Obsidian URI 本地创建并打开草稿，不再等待远端 Run；`完成评论` 才与 Atlas 收敛。
 - `/atlas:dismiss <resource_id>`：将没有 KnowledgeRef 的 Resource 标为 `dismissed`，并只删除可重建的 Resource Card。
 - `/atlas:restore <resource_id>`：将 dismissed Resource 恢复为 `pending`，并重建 Resource Card。
+- `/atlas:digest` 与 `/atlas:audit`：生成可重建的每日审阅简报和每周完整性检查；成功连接 Atlas 时会自动刷新当天简报，周日同时刷新 Audit。
+- `/atlas:compare <resource_id>`：显式排队 `vortex-comparison-v1`，只生成带双侧证据的候选关系 Resource，不修改人工 Knowledge。
+
+summary Resource 的 `metadata.profile_id` 表示分析目的。同一 Source 与 profile 只投影当前结果；不同 profile 并列存在。被 KnowledgeRef 引用的历史 Resource Card 会保留，避免破坏人工证据链接。
 
 `Resources/**` 是机器生成的投影，可以重建；`Knowledge/**` 只写本人负责的内容，reconciliation、dismiss 和 restore 都不会写入或删除它。摘要正文和 transcript 不进入 Atlas SQLite，也不进入 Run output。
 

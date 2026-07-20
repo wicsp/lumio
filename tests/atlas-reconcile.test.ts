@@ -88,6 +88,9 @@ test("reconciliation projects active summaries, removes dismissed cards, and bec
       if (path === "/api/resources?kind=summary&limit=500") {
         return { ok: true as const, data: [active, dismissed] as T };
       }
+      if (path === "/api/knowledge-refs?limit=500") {
+        return { ok: true as const, data: [] as T };
+      }
       if (path === `/api/resources/${active.resource_id}/bundle`) {
         return {
           ok: true as const,

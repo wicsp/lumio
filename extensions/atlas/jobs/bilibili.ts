@@ -738,6 +738,7 @@ export async function runLocalAsr(
           prompt_version: "audio-transcription-v1",
         },
         metadata: {
+          profile_id: "bilibili-transcript-v1",
           acquisition_mode: "local_asr",
           language: parsed.language || asrLanguage(request.language),
           asr_engine: "whisper.cpp",
@@ -900,10 +901,22 @@ export function storeSummaryArtifact(markdown: string, bvid: string): ArtifactRe
   );
 }
 
+/** Persist an explicit human-requested comparison as a machine-owned artifact. */
+export function storeComparisonArtifact(markdown: string, sourceId: string): ArtifactRefCreate {
+  return storeTextArtifact(
+    markdown,
+    join("resources", "comparisons"),
+    sourceId,
+    `comparison-${sourceId}`,
+    ".md",
+    "text/markdown; charset=utf-8",
+  );
+}
+
 /** Stable Resource identity for one Source, kind, and immutable content hash. */
 export function createResourceId(
   sourceId: string,
-  kind: "transcript" | "summary",
+  kind: "transcript" | "summary" | "comparison",
   contentHash: string,
 ): string {
   const digest = createHash("sha256")
@@ -1088,6 +1101,7 @@ export async function bilibiliSummaryHandler(
         content_hash: transcriptHash,
         generator: acquiredTranscript.generator,
         metadata: {
+          profile_id: "bilibili-transcript-v1",
           ...acquiredTranscript.metadata,
           acquisition_mode: acquiredTranscript.mode,
           language: acquiredTranscript.language,
@@ -1102,6 +1116,7 @@ export async function bilibiliSummaryHandler(
         content_hash: summaryHash,
         generator: summary.generator,
         metadata: {
+          profile_id: "bilibili-overview-v1",
           ...summary.metadata,
           transcript_resource_id: transcriptResourceId,
           transcript_acquisition_mode: acquiredTranscript.mode,

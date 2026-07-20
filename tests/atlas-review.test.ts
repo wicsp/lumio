@@ -10,7 +10,10 @@ import type {
   AtlasResourceRecord,
   AtlasSourceRecord,
 } from "../extensions/atlas/obsidian";
-import { vortexCommentHandler } from "../extensions/atlas/resource-review";
+import {
+  completeResourceComment,
+  vortexCommentHandler,
+} from "../extensions/atlas/resource-review";
 import type { ArtifactRef, RunRecord } from "../extensions/atlas/work";
 
 function run(resourceId: unknown): RunRecord {
@@ -87,7 +90,7 @@ function fixture() {
   return { vault, resource, source, artifactRef };
 }
 
-test("vortex-comment-v1 converges retries without overwriting human prose", async () => {
+test("vortex-comment-v1 creates only a pending local draft and preserves human prose", async () => {
   const { vault, resource, source, artifactRef } = fixture();
   const knowledgePayloads: unknown[] = [];
   const reviewPayloads: unknown[] = [];
@@ -140,26 +143,45 @@ test("vortex-comment-v1 converges retries without overwriting human prose", asyn
   assert.equal(replay.output.card_projection, "unchanged");
   assert.equal(readFileSync(notePath, "utf-8"), humanText);
 
-  assert.deepEqual(knowledgePayloads, [
-    {
-      note_id: noteId,
-      uri: first.output.note_uri,
-      source_ids: [source.source_id],
-      resource_ids: [resource.resource_id],
-    },
-    {
-      note_id: noteId,
-      uri: first.output.note_uri,
-      source_ids: [source.source_id],
-      resource_ids: [resource.resource_id],
-    },
-  ]);
-  assert.deepEqual(reviewPayloads, [
-    { review_status: "reviewed" },
-    { review_status: "reviewed" },
-  ]);
+  assert.equal(first.output.review_status, "pending");
+  assert.deepEqual(knowledgePayloads, []);
+  assert.deepEqual(reviewPayloads, []);
   const reported = JSON.stringify(replay.output);
   assert.doesNotMatch(reported, /这是我本人|Machine summary|absolute_path/);
+});
+
+test("explicit completion registers metadata and projects reviewed state", async () => {
+  const { resource, source, artifactRef } = fixture();
+  const posts: unknown[] = [];
+  const client: Pick<AtlasClient, "controlGet" | "controlPost" | "controlPatch"> = {
+    async controlGet<T>() {
+      return { ok: true as const, data: { resource, source, artifact: artifactRef } as T };
+    },
+    async controlPost<T>(path: string, body: unknown) {
+      assert.equal(path, "/api/review-actions/complete-comment");
+      posts.push(body);
+      return {
+        ok: true as const,
+        data: {
+          resource: { ...resource, review_status: "reviewed" },
+          knowledge_ref: {
+            knowledge_ref_id: "kref_comment",
+            note_id: `Knowledge/Comments/${resource.resource_id}`,
+            uri: "obsidian://open?vault=Vortex&file=Knowledge%2FComments%2Fres",
+            source_ids: [source.source_id],
+            resource_ids: [resource.resource_id],
+          },
+        } as T,
+      };
+    },
+    async controlPatch<T>() {
+      return { ok: false as const, status: 500, error: "unused" };
+    },
+  };
+
+  const result = await completeResourceComment(client, resource.resource_id);
+  assert.equal(result.resource.review_status, "reviewed");
+  assert.deepEqual(posts, [{ resource_id: resource.resource_id }]);
 });
 
 test("vortex-comment-v1 rejects invalid input without touching Atlas", async () => {

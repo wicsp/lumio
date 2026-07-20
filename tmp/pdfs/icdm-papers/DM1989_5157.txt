@@ -1,0 +1,1379 @@
+=== PAGE 1 ===
+Enhancing Adversarial Attacks via Parameter
+Adaptive Adversarial Attack
+Anonymous Author(s)
+Anonymous Affiliation(s)
+Abstract—In recent times, the swift evolution of adversarial
+attacks has captured widespread attention, particularly con-
+cerning their transferability and other performance attributes.
+These techniques are primarily executed at the sample level,
+frequently overlooking the intrinsic parameters of models. Such
+neglect suggests that the perturbations introduced in adversarial
+samples might have the potential for further reduction. Given
+the essence of adversarial attacks is to impair model integrity
+with minimal noise on original samples, exploring avenues to
+maximize the utility of such perturbations is imperative. Against
+this backdrop, we have delved into the complexities of adversarial
+attack algorithms, dissecting the adversarial process into two
+critical phases: the Directional Supervision Process (DSP) and the
+Directional Optimization Process (DOP). While DSP determines
+the direction of updates based on the current samples and
+model parameters, it has been observed that existing model
+parameters may not always be conducive to adversarial attacks.
+The impact of models on adversarial efficacy is often overlooked
+in current research, leading to the neglect of DSP. We show
+that, under certain conditions, temporarily fine-tuning model
+parameters can improve the quality of the DSP. We provide
+formal definitions and first-order conditions characterizing when
+such updates increase the attack loss, and introduce several
+practical methods for fine-tuning model parameters within DSP.
+Our extensive experiments substantiate the effectiveness of the
+proposed P3A method. Our code is available at an anonymous
+repository: https://anonymous.4open.science/r/P3A-A12C/.
+Index Terms—Adversarial attack, deep learning, robustness,
+parameter adaptation, transferability
+I. INTRODUCTION
+Adversarial attacks are central to assessing and improving
+the security of deep learning systems, especially when models
+are deployed in safety- and mission-critical real-world appli-
+cations. While recent work has largely shifted towardblack-
+boxsettings for practical relevance,white-boxanalysis remains
+invaluable: full access to model internals allows us to expose
+subtle vulnerabilities and to develop stronger attacks that in
+turn inform better defenses [1].
+Most modern attacks improve effectiveness by refining
+how perturbations areoptimized in input space. Representa-
+tive examples include momentum-based [2], transformation-
+based [3], and scale-invariant [4] variants. However, these
+methods take the model parameters as fixed and treat the
+gradient direction as given. We argue that the current param-
+eter setting of a model may not be the mostattack-favorable
+configuration for a given input: a slight, temporary adjustment
+of parameters can yield a more informative gradient direction
+and thus stronger perturbations.
+Adversarial Attack
+DSP DOP
+Determine the 
+direction of updates
+Using the results of DSP 
+obtains perturbation
+SSA:Frequency domain
+Our innovation
+Select
+MI-FGSM: Momentum
+SINI-FGSM: Scale-invariance
+...
+......
+Fig. 1. Overview of an adversarial attack with Directional Supervision
+(DSP) and Directional Optimization (DOP). P3A intervenes in DSP by briefly
+adapting model parameters to obtain a more informative update direction.
+To formalize this perspective, we conceptually split an
+attack into two stages (Fig. 1): (i) aDirectional Supervi-
+sion Process (DSP), which determines the update direction
+for the perturbation (e.g., via∇ xL); and (ii) aDirectional
+Optimization Process (DOP), which refines that direction
+through momentum, transformations, frequency-domain tricks,
+etc. Prior work predominantly innovates in DOP, while DSP is
+implicitly accepted as whatever the fixed model provides. Our
+key idea is toadapt the model parameters before (or during)
+DSPto obtain a better direction.
+Concretely, we introduceParameter Adaptive Adversarial
+Attack (P3A), which performs lightweight, loss-guided fine-
+tuning on alocal surrogate copyof the model to improve
+the gradient direction used for crafting the input perturbation.
+The final adversarial example is still evaluated on the original
+(unchanged) model, which aligns with realistic transfer attack
+settings. We show theoretically that small parameter updates
+can increase the loss under mild conditions, and we provide
+practical update rules that approximate the required second-
+order effects efficiently.
+Our contributions are as follows:
+1) We highlight and formalize the often-overlooked DSP
+stage of adversarial attacks and show that adapting
+model parameters can improve this stage.
+2) We derive conditions (via a directional finite-difference
+view) under which small parameter updates increase
+attack loss to first order, and we propose four practical
+update strategies with intuitive motivations.
+3) We empirically demonstrate that P3A consistently boosts
+both white-box efficacy (loss/ASR growth per step) and
+
+=== PAGE 2 ===
+black-box transferability, especially against adversarially
+trained CNNs and Vision Transformers.
+4) We will release code upon acceptance to facilitate re-
+producibility.
+For a precise statement of the threat model and usage
+scenario, please see Sec. III-A.
+II. RELATEDWORK
+A. White-box Attacks
+White-box attacks assume full access to model parameters
+and gradients and are widely used to evaluate robustness.
+FGSM [5] applies a single gradient-sign step, while BIM [6]
+iterates this update and PGD [7] further projects each step onto
+anℓ p-bounded set, making it a standard robustness benchmark.
+Optimization-based attacks such as C&W [8] formulate ad-
+versarial generation as a constrained objective and often yield
+highly imperceptible perturbations. These methods optimize
+perturbations in input space with fixed model parameters,
+and their effectiveness depends on the quality of the update
+direction, connecting to our DSP discussion in Section III-C.
+B. Black-box and Transfer Attacks
+Black-box attacks often rely on transferability from surro-
+gate models. Many methods enhance transfer by modifying
+the perturbation optimization process (DOP) to stabilize or
+diversify updates: MI-FGSM [2] introduces momentum, DI-
+FGSM [3] uses randomized differentiable transformations, TI-
+FGSM [9] enforces translation-invariance via gradient smooth-
+ing, and SINI-FGSM [4] combines Nesterov acceleration with
+scale-invariance. More recent approaches leverage integrated
+or relevance-guided gradients for improved transfer, including
+MIG [10] and GRA [11]. A complementary line modifies the
+surrogate modelitself: SGM [12] reweights gradients through
+skip connections, Ghost Networks [13] inject stochastic per-
+turbations into skip connections to form an implicit ensemble,
+and LGV [14] samples weights along a high-learning-rate tra-
+jectory. These perturb parameterstask-agnosticallyand fixed
+across inputs; P3A instead adaptsper input, keeps only updates
+passing an explicit first-order criterion (Sec. III-E), and reverts
+before evaluation on the original model. Overall, prior lines
+refine DOP while treating the gradient direction as fixed; we
+improve DSP by adapting parameters per input.
+C. Adversarial Defenses
+Adversarial training is a dominant defense strategy, com-
+monly instantiated with PGD-generated examples [7]. Ensem-
+ble defenses improve robustness by combining diverse models
+or predictors to reduce the chance that a single perturbation
+fools the system [15], [16]. RobustBench provides standard-
+ized protocols for benchmarking robustness across models and
+datasets [17]. Stronger attacks and reliable evaluation remain
+essential for advancing defenses; our work contributes by
+strengthening attacks under a practical compute budget.
+From a data-mining standpoint, transferable attacks are a
+practical tool forrobustness auditing: they stress-test deployed
+models without access to their internals, which is the realistic
+setting for security and privacy assessment of mined models.
+A stronger transfer attack therefore yields a tighter, more
+conservative robustness estimate, and a modular attack such
+as ours—which plugs into existing pipelines and reverts every
+parameter change—can be folded into standardized evaluation
+suites without altering the model under test. We position P3A
+in this light: not as a means to manipulate a remote system, but
+as a transferable, reproducible probe of model vulnerability.
+III. METHOD
+A. Threat Model & Use Case
+We assume awhite-box (or surrogate) setting: the attacker
+has full access to alocal copyof the target modelf(·;θ),
+including its architecture and gradients. During the attack
+generation process, the attacker is allowed totemporarily fine-
+tunethis local surrogate’s parameters to obtain more infor-
+mative gradients (betterDirectional Supervision) for crafting
+perturbations.
+Crucially, the deployed target model remains unchanged.
+The adversarial examplex adv produced with the help of
+the adapted surrogate (parametersθ ′) isevaluated on the
+original modelf(·;θ). This reflects realistic black-box transfer
+scenarios where modifying the remote model is infeasible;
+thus P3A primarily aims to boost transferability and to stress-
+test model robustness rather than to assume direct parameter
+manipulation of the victim.
+B. Problem Definition
+Consider a deep learning modelfparameterized byθ,
+which maps an input samplexto an output predictiony=
+f(x;θ), wherex∈R m andθ∈R n. In the context of
+adversarial attacks, the objective is to craft a perturbationδ
+such that the perturbed inputx adv =x+δcauses the model
+to output an incorrect predictionf(x adv;θ)̸=y true, where
+ytrue is the true label ofx.
+The loss function is utilized to measure the distance be-
+tween the model’s output distribution and the true distribution,
+hence, a larger loss function value indicates a more effective
+adversarial attack. The adversarial perturbationδis generated
+to maximize the loss functionL(f(x adv;θ), y true), which in
+Sec. III-E is denoted asL f y(x, θ), while conforming to a
+constraint on the perturbation’s magnitude to ensure impercep-
+tibility. This is typically quantified by some norm∥δ∥ p ≤ϵ,
+whereϵis a small constant.
+Formally, the problem can be stated as the following opti-
+mization problem:
+max
+δ
+L(f(x+δ;θ), y true),s.t.∥δ∥ p ≤ϵ.(1)
+In this work, we extend the conventional adversarial attack
+framework to incorporate the influence of model parameters
+θin crafting adversarial samples. Specifically, we examine
+the role of the first-order derivatives ∂L
+∂x and ∂L
+∂θ , which
+represent the sensitivities of the loss function to changes in the
+input sample and model parameters, respectively. Furthermore,
+we consider the second-order partial derivative ∂2L
+∂x∂θ , which
+assesses the impact of variations in model parametersθon
+
+=== PAGE 3 ===
+the gradient of the loss function with respect to the inputx,
+thereby offering a refined direction for crafting more effective
+adversarial samples.
+C. DSP and DOP in Adversarial Attacks
+We decompose an attack into two stages:Directional Su-
+pervision Process (DSP), which determines the update direc-
+tion via∇ xL, andDirectional Optimization Process (DOP),
+which refines and applies that direction (e.g., momentum,
+transformations, projection). Below we rewrite several classic
+attacks, marking DSP terms inbold; the remaining operators
+belong to DOP.
+a) FGSM.:The single-step attack takes the direction
+directly from the input gradient:
+xadv =x+ϵ·sign
+ ∂L(f(x, θ), y true)
+∂x
+
+.(2)
+b) PGD.:Iterative FGSM with projectionΠ x+ϵ back
+into theϵ-ball:
+xt+1
+adv = Πx+ϵ
+
+xt
+adv +α·sign
+ ∂L(f(x t
+adv, θ), ytrue)
+∂x
+
+.(3)
+c) MI-FGSM.:Momentum smooths and stabilizes the
+direction:
+gt+1 =µ·g t +
+∂L(f(x t
+adv,θ),ytrue)
+∂x
+ ∂L(f(x t
+adv,θ),ytrue)
+∂x
+
+1
+, x t+1
+adv =x t
+adv +ϵ·sign(g t+1).
+(4)
+d) DI-FGSM.:A randomized transformationT(·)is ap-
+plied before the gradient computation to improve transferabil-
+ity:
+xt+1
+adv =x t
+adv +ϵ·sign
+ ∂L(f(T(x t
+adv), θ), ytrue)
+∂x
+
+.(5)
+e) SINI-FGSM.:Nesterov look-ahead with a scale oper-
+atorS(·):
+gt+1 =µ·g t+
+∂L(f(S(x t
+adv),θ),ytrue)
+∂x
+ ∂L(f(S(x t
+adv),θ),ytrue)
+∂x
+
+1
+, x t+1
+adv =x t
+adv+ϵ·sign(gt+1).
+(6)
+In all cases, the bold term∂L/∂xconstitutes the DSP
+that supplies the direction, while projection, momentum, the
+transformsT /S, and normalization are DOP components that
+shape how this direction is exploited. Next, we analyze how
+adaptingθcan further improve DSP by yielding a more
+informative gradient.
+D. Second-Order Partial Derivatives and DFD
+The objective of adversarial attacks is to maximize the loss
+function by adding limited perturbations to the samples. It
+is crucial to examine the relationship between changes in
+each dimension of the samples and the loss function value
+(the partial derivative of the loss function with respect to the
+input samples, ∂L
+∂x ) to identify the appropriate direction for
+sample updates. If we consider the impact of model parame-
+ters, we need to compute the second-order partial derivatives
+∂2L
+∂x∂θ . According to Clairaut’s theorem [18], ∂2L
+∂x∂θ = ∂2L⊤
+∂x∂θ ,
+meaning the order of input samples and model parameters
+can be interchanged without affecting the proof process. Due
+to the high computational cost and storage requirement of
+calculating second-order partial derivatives ∂2L
+∂x∂θ ∈R m×n,
+an approximation of the calculation process can be made by
+estimating the influence ofθon ∂L
+∂x . Here, we present the
+theorem in its general form:
+Theorem 1(Directional Finite Difference (DFD)).The
+second-order derivative of a function can be estimated using
+the difference in first-order derivatives. Given a function
+f(v, u)with two variables, we have
+∂2f(v, u)
+∂v∂u ∆u≈
+∂f(v,u+ε∆u)
+∂v − ∂f(v,u)
+∂v
+ε
+≈
+∂f(v,u+ε∆u)
+∂v − ∂f(v,u−ε∆u)
+∂v
+2ε
+(7)
+Proof.A first-order Taylor expansion of the gradient inu
+gives
+∂f(v, u+ε∆u)
+∂v = ∂f(v, u)
+∂v +ε· ∂2f(v, u)
+∂v∂u ·∆u+O(ε 2),(8)
+and the claim follows by rearranging the terms; the symmetric
+(central) form is obtained analogously from theu−ε∆u
+expansion.
+In this context, the input samplexcan be regarded asv, and
+the parameterθisu. Directional finite difference serves as an
+effective tool for assessing the higher-order (second-order in
+this paper) properties of a function.
+E. Parameter Adaptive Adversarial Attack
+Utilizing the definition and proof process of directional
+finite difference, it becomes evident that during estimation, the
+change in variableu, denoted as∆u, needs to be specified. In
+neural networks,∆ucorresponds to changes in parameters
+∆θ. We then define the impact of parameter changes on
+adversarial effectiveness:
+Theorem 2.Given model parametersθand the parameter
+updateθ ′ =θ+α·F(θ)(with step sizesα, β >0), we have
+Lθ′ ⩾L θ provided that(g ′
+θ −g θ)⊤gθ ⩾0,
+Lθ =L f y
+
+x+β ∂Lf y(x, θ)
+∂x , θ
+
+(9)
+Lθ′ =L f y
+
+x+β ∂Lf y(x, θ+α·F(θ))
+∂x , θ
+
+(10)
+where·denotes the dot product,g θ = ∂Lf y(x,θ)
+∂x represents
+the gradient of the loss function calculated for the current
+sample under parametersθ, and∆θ=αF(θ)represents the
+parameter change. Here,βdenotes the step-size or pertur-
+bation scaling factor along the input-gradient direction used
+for local expansion, which is a positive scalar controlling the
+magnitude of the local gradient step.
+The derivation relies on a local expansion and the DFD
+approximation, and is given below (after Theorem 3). Here
+O1 andO 2 denote higher-order infinitesimals. We write
+gθ = ∂Lf y(x,θ)
+∂x for the input gradient computed at the original
+parameters andg ′
+θ = ∂Lf y(x,θ+αF(θ))
+∂x for the input gradient
+computed at the adapted parametersθ ′ =θ+αF(θ). Both are
+
+=== PAGE 4 ===
+gradients of the loss with respect to theinputx; they differ
+only in the parameter point at which the gradient is evaluated.
+Theorem 3.Withg ′
+θ defined as in Theorem 2 (the input
+gradient atθ+αF(θ)), the opposite updateθ ′ =θ−α·F(θ)
+instead satisfiesL θ′ ⩾L θ provided that(g ′
+θ −g θ)⊤gθ ⩽0.
+Interpretation.Both are first-order (local) statements:ifthe
+parameter-induced change in the input gradient,g ′
+θ −g θ, is
+positively correlated with the original gradientg θ,thenthe
+input step at the adapted parameters increases the loss to
+leading order (the opposite sign governs the−αFupdate).
+We present these not as a deep guarantee—they follow from
+a Taylor expansion plus the DFD approximation—but as a
+cheap, theory-groundedselection rule: compute one probe
+gradientg ′
+θ and pick the update sign from that of(g ′
+θ −gθ)⊤gθ,
+costing at most one extra gradient per candidate.
+Proof of Theorems 2 and 3.ExpandingL ′
+θ aroundxand
+keeping first-order terms,
+L′
+θ =L f y
+
+x+β
+∂Lf y(x,θ+αF(θ))
+∂x , θ
+
+=L f y(x, θ) +β
+∂Lf y(x,θ+αF(θ)) ⊤
+∂x
+∂Lf y(x,θ)
+∂x +O 1
+≈L f y(x, θ) +β
+∂Lf y(x,θ)⊤
+∂x
+∂Lf y(x,θ)
+∂x| {z }
+Lθ
++βα
+∂2Lf y(x,θ)⊤
+∂x∂θ F(θ)
+∂Lf y(x,θ)
+∂x .(11)
+By Theorem 1 withv=x,u=θ,∆u=F(θ),ε=α,
+α
+∂2Lf y(x,θ)
+∂x∂θ F(θ)≈
+∂Lf y(x,θ+αF(θ))
+∂x| {z }
+g′
+θ
+−
+∂Lf y(x,θ)
+∂x| {z }
+gθ
+.(12)
+Substituting yieldsL ′
+θ ≈L θ +β(g ′
+θ −g θ)⊤gθ, soL θ′ ⩾L θ
+whenever(g ′
+θ−gθ)⊤gθ ⩾0(recallβ >0), proving Theorem 2.
+ReplacingF(θ)with−F(θ)flips the sign ofg ′
+θ −g θ to first
+order, so the−αF(θ)update increases the loss exactly when
+(g′
+θ −g θ)⊤gθ ⩽0, proving Theorem 3.
+a) Parameter-Update Strategies.:While Theorems 2
+and 3 provide a theory-guided criterion to filter beneficial pa-
+rameter updates, we introduce four candidate update strategies
+as a practical instantiation for efficient implementation. Each
+method comes with a simple intuition that mirrors common
+practices in input-space attacks:
+1)Defensive Perspective:θ=θ±α ∂Lf y(x,θ)
+∂θ .Motivation.
+This is a gradient-guided rule (analogous to gradient
+ascent onθ) that pushes parameters along directions
+that most rapidly increase the loss. We keep the term
+“Defensive Perspective” because the same gradient is
+what a defender woulddescendon during adversarial
+training; here we use its opposite to reveal vulnerability-
+sensitive directions.
+2)Uniform Method:θ=θ±α·S, whereSis a con-
+stant value.Motivation.A gradient-free baseline to test
+whether an equal (uniform) nudge on every parameter
+already suffices to alter the DSP direction—i.e., a sanity
+check for “does any small shift help?”.
+3)Magnitude Consideration:θ=θ±α· ∂θ 2
+∂θ (equivalently
+θ±2α θ, an element-wise scaling by parameter magni-
+tude).Motivation.Larger-magnitude weights are often
+more influential; weighting the update by parameter
+magnitude explores those potentially more impactful
+components more extensively than a uniform shift.
+4)Decoupling Method:θ=θ±α·sign
+
+∂Lf y(x,θ)
+∂θ
+
+.Mo-
+tivation.Using only the sign of the parameter gradient
+(as in FGSM for inputs [5]) decouples direction from
+magnitude, emphasizing pure directional information.
+Selection via Theorems 2 and 3.At each iteration, we instan-
+tiate the above candidates (considering±when applicable),
+recompute the input gradient for each, and evaluate the first-
+order condition from Theorems 2 and 3. Only candidates
+satisfying the condition (i.e., yielding(g ′
+θ −g θ)⊤gθ ≥0or its
+counterpart) are kept, and we choose the one with the largest
+projected gain. If none qualifies, we skip parameter adaptation
+for that step.
+Accumulation across iterations.This check is repeated every
+iteration; becauseα(and thus the parameter change) is small,
+we did not observe degradation in later steps nor the need to
+roll back parameters. After crafting one adversarial example,
+we reset the surrogate to the originalθfor the next sample.
+The parameter update is not itself the attack.The parameter
+adaptation is applied only to a temporary local copy of the
+surrogate, which is reverted after each input is processed;
+crucially, every reported loss and ASR is computed on the
+original, unadaptedmodelθ(Sec. III-A). Misclassification
+is therefore produced by the input perturbationδevaluated
+on the unmodified model, preserving standard adversarial-
+attack semantics rather than degrading the deployed model.
+For pseudo-code see Section III-F.
+F . Algorithm and Implementation
+Algorithm 1 summarizes P3A as awrapper around any
+gradient-based base attack: the candidate setFholds the four
+strategies of Sec. III-E0a, and the DOP operatorDis the base
+attack’s refinement (momentum, translation-invariance, input
+diversity, frequency-domain mixing). Each iteration computes
+the base gradientg θ; for every candidate and signs∈ {±1}
+adapts a temporary copyθ ′ =θ+sηF(θ), recomputes the
+probe gradientg ′
+θ, and tests the criterion of Theorems 2–3;
+keeps the qualifying candidate with the largest projected gain
+(or falls back tog θ if none qualifies); passes it throughD; takes
+a sign step withℓ ∞ clipping; and resets the surrogate. The
+adaptation is thus per-input, bounded, and reverted, consistent
+with Sec. III-A.
+a) Complexity.:P3A wraps the base attack without
+changing its asymptotic structure. LetC g be the cost of one
+base gradient evaluation and|F |the number of candidate
+update rules. Each of theTiterations performs one base
+gradient computation plus, for every candidate and signs∈
+{±1}, a temporary parameter step and one probe gradient, i.e.
+1 + 2|F |gradient evaluations versus a single one for the base
+attack. The per-iteration time is thereforeO((1 + 2|F |)C g),
+
+=== PAGE 5 ===
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni0000001b
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000016
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000013/uni00000011/uni00000013/uni0000001b
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000018/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000014/uni00000013/uni00000014
+/uni00000025/uni0000002c/uni00000030
+/uni00000033/uni0000002a/uni00000027
+/uni00000027/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000037/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000030/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000036/uni0000002c/uni00000031/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni0000001b
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000016
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000014/uni00000018/uni00000015
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013/uni00000010/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000035/uni00000048/uni00000056/uni00000010/uni00000059/uni00000015
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013/uni00000010/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni0000001a
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000015
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016/uni00000010/uni00000044/uni00000047/uni00000059
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016/uni00000010/uni00000044/uni00000047/uni00000059/uni00000010/uni00000048/uni00000051/uni00000056/uni00000016
+Fig. 2. Incremental efficacy of P3A on cross-entropy loss across attack steps. The y-axis is the change in cross-entropy loss and the x-axis is attack steps;
+the black dashed line is the base attack without P3A.
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000013/uni00000011/uni00000013/uni0000001b
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000018/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000014/uni00000013/uni00000014
+/uni00000025/uni0000002c/uni00000030
+/uni00000033/uni0000002a/uni00000027
+/uni00000027/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000037/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000030/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000036/uni0000002c/uni00000031/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000014/uni00000018/uni00000015
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013/uni00000010/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000035/uni00000048/uni00000056/uni00000010/uni00000059/uni00000015
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni0000001b
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016/uni00000010/uni00000044/uni00000047/uni00000059
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016/uni00000010/uni00000044/uni00000047/uni00000059/uni00000010/uni00000048/uni00000051/uni00000056/uni00000016
+Fig. 3. Incremental efficacy of P3A on ASR across attack steps. The y-axis is the change in ASR and the x-axis is attack steps; the black dashed line is the
+base attack without P3A.
+a constant-factor overhead that is independent of the input di-
+mension. Space grows only by one temporary surrogate copy,
+O(n)in the number of parametersn, which is released after
+each step; no second-order tensor is ever materialized because
+the DFD criterion needs only first-order probe gradients. In
+practice|F |and the number of probed signs are tunable knobs
+that trade attack strength for speed, allowing the overhead to
+be dialed down when compute is constrained.
+IV. EXPERIMENTS
+A. Experimental Setup
+1) Dataset and Models:Following prior works [19], [20],
+we randomly selected 1000 images from the ILSVRC 2012
+validation set [21] as a standard benchmark for evaluating
+transferability and robustness. To ensure strict reproducibility,
+we will publicly release the exact sample indices, random
+seed, and file-name list following the ImageNet usage policy
+upon acceptance. For comprehensive assessment, we tested our
+P3A method on diverse architectures, including CNNs (Inc-
+v3 [22], Inc-v4, Inc-Res-v2 [23], ResNet-50/101/152 [24]),
+adversarially trained models (Inc-v3-adv [25], Inc-v3-adv-
+ens3/ens4, Inc-Res-ens [15]), and vision Transformers (ViT-
+B/16 [26], MaxViT-T [27]).
+2) Baseline Methods:Our experimental design for the
+white-box attack scenario amalgamates six widely recognized
+attack techniques: BIM [6], PGD [7], DI-FGSM [3], TI-
+FGSM [9], MI-FGSM [2], and SINI-FGSM [4]. This com-
+prehensive approach is employed to underscore the versatility
+of our P3A method in enhancing white-box attack efficacy
+across various methodologies. Conversely, for the transfer
+
+=== PAGE 6 ===
+TABLE I
+COMPARISON OFASR (%),SHOWCASING THE PERFORMANCE OFP3AAGAINST OTHER STATE-OF-THE-ART TRANSFERABLE ATTACK METHODS ACROSS
+DIFFERENT MODELS. THE BEST PERFORMANCE RESULTS ARE MARKED IN BOLD.
+Model Method Inc-v3 Inc-v4 IncRes-v2 Res-50 Res-101 Res-152 Inc-v3-ens3 Inc-v3-ens4 IncRes-ens ViT-B/16 MaxViT-T Average
+Inc-v3
+MIG - 70.6% 69.1% 69.2% 64.5% 63.5% 38.9% 40.2% 22.0% 32.1% 31.5% 50.2%
+GRA - 82.0% 81.4% 76.8% 74.0% 75.1% 53.1% 50.6% 29.9% 39.4% 43.0% 60.5%
+P3A (ours) -89.0% 87.4% 81.6% 81.2% 81.1% 74.2% 73.4% 59.3% 54.3% 47.9% 72.9%
+Inc-v4
+MIG 86.3% - 78.6% 77.7% 73.3% 74.8% 52.7% 48.2% 33.8% 40.2% 46.9% 61.3%
+GRA 86.8% - 80.8% 77.7% 75.1% 76.1% 54.6% 51.6% 34.2% 40.5% 49.7% 62.7%
+P3A (ours) 91.4%-87.7% 83.1% 81.2% 82.3% 75.4% 72.9% 63.6% 57.7% 56.0% 75.1%
+ResNet-152
+MIG 67.5% 59.9% 52.4% 71.4% 69.1% - 28.3% 27.3% 15.3% 22.7% 30.7% 44.5%
+GRA 88.2% 86.3% 83.9% 91.8% 91.1% - 68.1% 65.5% 54.4% 58.3% 60.2% 74.8%
+P3A (ours) 94.4% 94.4% 92.8% 95.5% 95.3%-87.8% 84.9% 80.0% 73.4% 72.3% 87.1%
+ViT-B/16
+MIG 67.8% 62.4% 55.6% 65.5% 62.6% 61.4% 57.6% 56.8% 50.3% - 54.1% 59.4%
+GRA 77.6% 71.3% 70.2% 76.3% 74.0% 72.6% 68.1% 67.9% 60.8% - 72.4% 71.1%
+P3A (ours) 78.7% 73.4% 71.2% 77.4% 74.9% 73.8% 72.1% 73.3% 67.0%-63.3% 72.5%
+MaxViT-T
+MIG 74.2% 75.8% 67.7% 73.4% 69.4% 69.1% 55.7% 57.0% 50.1% 63.1% - 65.6%
+GRA 78.3% 77.5% 72.9% 76.4% 73.7% 74.1% 66.5% 68.5% 61.0% 75.9% - 72.5%
+P3A (ours) 80.6% 82.0% 76.9% 78.9% 78.0% 76.2% 74.1% 73.9% 70.0% 82.1%- 77.3%
+Algorithm 1Parameter Adaptive Adversarial Attack (P3A)
+Require:Surrogatef(·;θ), inputx, labely, budgetϵ, step
+sizeα, iterationsT, adaptation rateη, candidate update
+setF, base-attack DOP operatorD
+Ensure:Adversarial examplex adv
+1:x adv ←x;[x min,x max]←[x−ϵ,x+ϵ];g←0
+2:fort= 1, . . . , Tdo
+3:g θ ← ∇ xL(f(x adv;θ),y)▷base DSP gradient
+4:C ←∅▷accepted candidates
+5:foreach updateF∈ Fand signs∈ {+1,−1}do
+6:θ ′ ←θ+s η F(θ)▷adapt a temporary copy
+7:g ′
+θ ← ∇ xL(f(x adv;θ ′),y)▷probe gradient
+8:c←s(g ′
+θ −g θ)⊤gθ ▷Thm. 2/3 criterion
+9:ifc≥0then
+10:C ← C ∪ {(g ′
+θ, c)}
+11:end if
+12:end for
+13:ifC ̸=∅then
+14:ˆg←theg ′
+θ of the accepted pair with the largestc
+15:else
+16:ˆg←g θ ▷no update qualifies: keep base direction
+17:end if
+18:g← D(ˆg,g)▷DOP: momentum / TI / input
+diversity
+19:x adv ←clip(x adv +αsign(g),x min,x max)
+20:reset surrogate toθ
+21:end for
+22:returnx adv
+attack scenario, our focus shifts to assessing models’ resilience
+against transferable attacks. Accordingly, we selected several
+recent state-of-the-art transfer attack methods to validate the
+efficacy of our approach, including Momentum Integrated
+Gradients (MIG) [10], Gradient Relevance Attack (GRA) [11],
+ANDA [28], and FoolMix [29].
+3) Metrics:We evaluate attack performance using two
+primary metrics. The first is the increase in model loss, which
+reflects the attack’s ability to amplify prediction errors in
+white-box settings. A larger loss indicates a stronger deviation
+from the correct label, showcasing the attack’s impact level on
+the model. The second is Attack Success Rate (ASR), defined
+as the proportion of samples that lead to incorrect model
+predictions. ASR serves as a direct and interpretable measure
+of attack effectiveness across both white-box and black-box
+scenarios.
+4) Parameters:In the white-box attack scenario, the hy-
+perparameters for our P3A method include the attack step
+sizeα, the perturbation budgetϵ, and the learning rate for
+fine-tuning model parameters. We setα= 1,ϵ= 8, and
+the fine-tuning learning rate to1×10 −4.Tuning protocol.
+To rule out that gains merely reflect a more favorable budget
+for P3A, the attack budget(α, ϵ, T)is heldidenticalfor P3A
+and every baseline (from the standard benchmark [30]), with
+each baseline using its authors’ recommended configuration;
+we never tune the shared budget per method. TheonlyP3A-
+specific hyperparameter is the adaptation rateη, and selection
+is otherwise parameter-free givenη. The ablation in Sec. IV-C
+shows P3A improves over its base attack across the whole
+rangeη∈ {10 −4,10 −5,10 −6}, not just at one tuned value, so
+the gain is not an artifact ofη.
+Implementation and protocol.All attacks run forT= 10
+iterations on the same fixed set of1000ImageNet images with
+a fixed random seed, so the comparison is paired image-by-
+image and deterministic; unless stated otherwise, each reported
+number corresponds to a single such run. The surrogate pa-
+rameter adaptation uses one SGD-style step per candidate (no
+inner loop), and the temporary surrogate is restored toθafter
+every image, so no state leaks across samples. All methods
+share the same data loader, normalization, and evaluation
+code, and are executed in an identical software and single-
+GPU hardware environment; the throughput and peak-memory
+figures in Table III are measured under this common setup
+to make the efficiency comparison fair. We evaluate transfer
+to every target model in the benchmark and report the attack
+success rate as the fraction of the1000examples misclassified
+
+=== PAGE 7 ===
+by each target.
+B. Results
+1) White-box Scenario:What is measured.All loss and
+ASR values in this section are computed on theoriginal,
+unadaptedmodelf(·;θ). Parameter adaptation is applied only
+to a local surrogate copy to obtain the update direction
+(DSP) and is reverted before the resulting perturbed input is
+evaluated; we never report loss on the adapted parametersθ ′.
+This is consistent with the threat model in Sec. III-A and
+with the definition ofL θ′ in Theorem 2, whose outer loss
+is evaluated atθ, and it avoids the circularity of measuring
+loss on the very parameters that were tuned to increase it.
+The reported gains therefore reflect a more informative update
+direction, not a weakened model.
+In Fig. 2, we document the incremental efficacy of P3A
+with respect to cross-entropy loss across a suite of attacks
+(BIM, PGD, DI-FGSM, TI-FGSM, MI-FGSM, SINI-FGSM);
+the same trend holds for KL divergence. P3A augments both
+metrics across all attack strategies. Versus the baselines, cross-
+entropy loss rises by0.028on average and KL loss by0.031.
+SINI-FGSM shows the largest boost (0.052CE /0.055KL)
+and DI-FGSM the smallest (0.011both), indicating broad
+compatibility of our approach.
+As the attack iterations progress, we witness a diminish-
+ing marginal increase in the Loss value. This trend can be
+attributed to the decreasing sensitivity of the model to further
+perturbations, reflective of the adaptive nature of deep learning
+models under sustained adversarial pressure. Nevertheless, the
+sustained incremental gains validate the potency and utility of
+the P3A method in enhancing adversarial attacks step-by-step.
+Further examination reveals that adversarially trained mod-
+els, such as Inc-v3-adv and Inc-v3-adv-ens3, also benefit from
+the P3A method, albeit to a lesser extent compared to models
+without adversarial hardening like Inc-v3, Inc-v4, and Res-
+50. This outcome suggests the efficacy of adversarial training
+in bolstering model robustness, and concurrently, the P3A
+method’s capacity to introduce improvements even within
+robustified models.
+Fig. 3 complements these findings by demonstrating the
+incremental impact of the P3A method on the ASR across
+attack steps for different models. The substantial increases in
+ASR, particularly evident in adversarially trained models Inc-
+v3-adv and Inc-v3-adv-ens3, underscore the adaptability and
+enhanced performance of the P3A method in bolstering ASRs,
+especially within models fortified against such adversarial
+exploits.
+2) Black-box Scenario:Table I presents a comparison of
+the ASR between P3A and other state-of-the-art transferable
+attack methods across various models. In all tested models,
+P3A achieved the highest ASR in most cases, demonstrating
+its superiority in transferable attacks. Notably, P3A’s perfor-
+mance was particularly strong when using Inc-v3, Inc-v4, and
+MaxViT-T as the source model, with average transfer ASRs
+reaching 72.9%, 75.1%, and 77.3% respectively. This could
+be attributed to P3A’s attack strategy effectively adapting to
+and exploiting the specific vulnerabilities of these models.
+Compared to the MIG and GRA methods, P3A exhibited
+significant improvements against adversarially robust models
+(e.g., Inc-v3-ens3 and Inc-v3-ens4). Even for more complex
+Transformer architectures (ViT-B/16 and MaxViT-T), P3A also
+demonstrated strong attack capabilities. The strongest source is
+ResNet-152, where P3A attains the highest average in the table
+(87.1%vs.74.8%for GRA and44.5%for MIG), with large
+margins on hardened ensemble targets (IncRes-ens:80.0%vs.
+54.4%); its rich skip-connection structure gives the adaptation
+more freedom to reshape the input gradient.
+Furthermore, to better position P3A against the most recent
+advancements, we evaluate its transferability alongside ANDA
+(CVPR 2024) and FoolMix (TIFS 2025). As summarized
+in Table II, under the exact same evaluation protocol, P3A
+consistently outperforms both methods across various architec-
+tures, further corroborating its superiority in generating highly
+transferable adversarial examples.
+3) Computational Overhead:Since P3A evaluates multiple
+candidate parameter-update directions via directional finite
+difference, it requires additional gradient computations per
+iteration. In Table III, we quantify this overhead by reporting
+peak GPU memory and throughput (Frames Per Second, FPS)
+under an identical hardware and software environment. P3A is
+the most expensive method here—lowest throughput, highest
+peak memory—because each iteration probes several signed
+candidates with an extra gradient apiece. We state plainly when
+this is worth it. The overhead suits the offline, high-value
+regime that motivates transfer attacks (robustness auditing,
+red-teaming), and pays off most on the hardest targets: against
+adversarially trained and cross-architecture (CNN→ViT) tar-
+gets P3A improves transfer ASR by10–25points over GRA
+(Table I). When the source already transfers well and the
+margin is small—e.g. a ViT-B/16 source, where P3A exceeds
+GRA by only∼1.4points—a cheaper DOP-only attack may
+be preferable. The candidate setFand probe count trade
+accuracy for speed, so P3A is a strong-but-heavier option, not
+a universal default. Concretely, Table III shows P3A at0.87
+FPS and3312MB peak memory: it is faster than the relevance-
+guided GRA (0.55FPS) yet slower than the lightweight MIG
+(4.68FPS), with the memory cost reflecting the temporary
+surrogate copy and the cached probe gradients. Because the
+per-step cost grows only linearly in|F |(Sec. III-F) and not in
+the input size, the overhead stays within a practical range for
+offline adversarial-example generation, and shrinking|F |from
+four candidates to the singleDefensiverule recovers most of
+the gain at a fraction of the cost.
+C. Ablation Study
+To understand the individual contribution of each hyper-
+parameter in theP3Apipeline, we perform a systematic
+ablation study. Unless otherwise stated, the attack step size is
+fixed toα= 1and the learning rate for parameter fine-tuning
+is set to10 −4.
+a) Effect of Parameter-Update Strategies:Four
+parameter-update strategies (Defensive Perspective,Uniform,
+
+=== PAGE 8 ===
+TABLE II
+TRANSFERASRCOMPARISON WITH RECENT BASELINES(ANDAANDFOOLMIX)UNDER THE SAME PROTOCOL. P3ACONSISTENTLY OUTPERFORMS
+THE STATE-OF-THE-ART.
+Src MethodInc-v3 Inc-v4 IncRes-v2 Res-50 Res-101 Res-152 Inc-v3-ens3 Inc-v3-ens4 IncRes-ens ViT-B/16 MaxViT-T Avg.
+Inc-v3 ANDA (CVPR’24) – 83.2% 77.5% 76.3% 74.4% 71.3% 70.2% 69.9% 53.4% 37.6% 32.2% 64.6%
+Inc-v3 FoolMix (TIFS’25) – 44.5% 40.6% 46.0% 39.8% 42.0% 37.5% 35.9% 25.0% 20.9% 12.4% 34.5%
+Inc-v3 P3A (Ours) –89.0% 87.4% 81.6% 81.2% 81.1% 74.2% 73.4% 59.3% 54.3% 47.9% 72.9%
+ViT-B/16 ANDA (CVPR’24) 59.3% 53.6% 48.8% 54.0% 54.0% 51.9% 51.0% 53.7% 44.0% – 49.1% 51.9%
+ViT-B/16 FoolMix (TIFS’25) 41.1% 36.0% 27.1% 38.5% 35.2% 34.8% 33.7% 36.1% 27.5% – 28.4% 33.8%
+ViT-B/16 P3A (Ours)78.7% 73.4% 71.2% 77.4% 74.9% 73.8% 72.1% 73.3% 67.0%–63.3% 72.5%
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000025/uni0000002c/uni00000030
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000033/uni0000002a/uni00000027
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000027/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000037/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000030/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000015/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000036/uni0000002c/uni00000031/uni0000002c/uni00000010/uni00000029/uni0000002a/uni00000036/uni00000030
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000027/uni00000048/uni00000049/uni00000048/uni00000051/uni00000056/uni0000004c/uni00000059/uni00000048/uni00000003/uni00000033/uni00000048/uni00000055/uni00000056/uni00000053/uni00000048/uni00000046/uni00000057/uni0000004c/uni00000059/uni00000048/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056/uni00000027/uni00000048/uni00000049/uni00000048/uni00000051/uni00000056/uni0000004c/uni00000059/uni00000048/uni00000003/uni00000033/uni00000048/uni00000055/uni00000056/uni00000053/uni00000048/uni00000046/uni00000057/uni0000004c/uni00000059/uni00000048/uni00000003/uni00000024/uni00000036/uni00000035/uni00000038/uni00000051/uni0000004c/uni00000049/uni00000052/uni00000055/uni00000050/uni00000003/uni00000030/uni00000048/uni00000057/uni0000004b/uni00000052/uni00000047/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056/uni00000038/uni00000051/uni0000004c/uni00000049/uni00000052/uni00000055/uni00000050/uni00000003/uni00000030/uni00000048/uni00000057/uni0000004b/uni00000052/uni00000047/uni00000003/uni00000024/uni00000036/uni00000035/uni00000030/uni00000044/uni0000004a/uni00000051/uni0000004c/uni00000057/uni00000058/uni00000047/uni00000048/uni00000003/uni00000026/uni00000052/uni00000051/uni00000056/uni0000004c/uni00000047/uni00000048/uni00000055/uni00000044/uni00000057/uni0000004c/uni00000052/uni00000051/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056/uni00000030/uni00000044/uni0000004a/uni00000051/uni0000004c/uni00000057/uni00000058/uni00000047/uni00000048/uni00000003/uni00000026/uni00000052/uni00000051/uni00000056/uni0000004c/uni00000047/uni00000048/uni00000055/uni00000044/uni00000057/uni0000004c/uni00000052/uni00000051/uni00000003/uni00000024/uni00000036/uni00000035/uni00000027/uni00000048/uni00000046/uni00000052/uni00000058/uni00000053/uni0000004f/uni0000004c/uni00000051/uni0000004a/uni00000003/uni00000030/uni00000048/uni00000057/uni0000004b/uni00000052/uni00000047/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056/uni00000027/uni00000048/uni00000046/uni00000052/uni00000058/uni00000053/uni0000004f/uni0000004c/uni00000051/uni0000004a/uni00000003/uni00000030/uni00000048/uni00000057/uni0000004b/uni00000052/uni00000047/uni00000003/uni00000024/uni00000036/uni00000035
+Fig. 4. Performance of P3A on various models under the four parameter-update strategies. The left y-axis is the change in cross-entropy loss and the right
+y-axis is the change in ASR.
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016
+/uni0000002f/uni00000035/uni00000020/uni00000013/uni00000011/uni00000013/uni00000013/uni00000013/uni00000014/uni00000003/uni0000002e/uni0000002f/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056
+/uni0000002f/uni00000035/uni00000020/uni00000014/uni00000048/uni00000010/uni00000013/uni00000018/uni00000003/uni0000002e/uni0000002f/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056
+/uni0000002f/uni00000035/uni00000020/uni00000014/uni00000048/uni00000010/uni00000013/uni00000019/uni00000003/uni0000002e/uni0000002f/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056
+/uni00000013/uni00000011/uni00000013/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000018/uni00000013
+/uni00000013/uni00000011/uni00000013/uni0000001a/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013/uni00000013
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000013/uni00000011/uni00000015/uni00000013
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000018/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000013/uni00000011/uni00000015/uni00000013
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000014/uni00000013/uni00000014
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000014/uni00000018/uni00000015
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000035/uni00000048/uni00000056/uni00000010/uni00000059/uni00000015
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016/uni00000010/uni00000044/uni00000047/uni00000059
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016/uni00000010/uni00000044/uni00000047/uni00000059/uni00000010/uni00000048/uni00000051/uni00000056/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000013/uni00000011/uni00000013/uni0000001b
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni0000002f/uni00000035/uni00000020/uni00000013/uni00000011/uni00000013/uni00000013/uni00000013/uni00000014/uni00000003/uni00000024/uni00000036/uni00000035
+/uni0000002f/uni00000035/uni00000020/uni00000014/uni00000048/uni00000010/uni00000013/uni00000018/uni00000003/uni00000024/uni00000036/uni00000035
+/uni0000002f/uni00000035/uni00000020/uni00000014/uni00000048/uni00000010/uni00000013/uni00000019/uni00000003/uni00000024/uni00000036/uni00000035
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+Fig. 5. Performance of P3A on various models under different parameter-adaptation learning ratesη. The x-axis is attack steps; the left y-axis is the change
+in KL loss and the right y-axis is the change in ASR.
+TABLE III
+EFFICIENCY COMPARISON UNDER THE SAME EVALUATION SETUP
+(IMAGENET SUBSET;IDENTICAL RUNTIME ENVIRONMENT). WE REPORT
+PEAKGPUMEMORY(MB)AND THROUGHPUT(FPS;HIGHER IS FASTER).
+AttackMIG GRA ANDA FoolMix P3A
+PeakMem (MB) 2075.32 230.25 2741.37 989.46 3312.15
+FPS (↑) 4.68 0.55 3.55 1.30 0.87
+Magnitude Consideration, andDecoupling) were introduced
+in Sec. III-E0a.
+Fig. 4 contrasts their influence onP3A. Updating param-
+eters from theDefensive Perspectiveconsistently produces
+the greatest reduction in cross-entropy and the largest gain in
+ASR across all baseline attacks and architectures. In particular,
+it improves ASR by3.1%on average over the next best
+alternative, confirming that gradients aligned withDefensive
+Perspectivelead to the most adversarially favorable decision-
+boundaries. We do observe a crossover in Fig. 4:Decoupling
+yields a larger loss increase thanDefensivein later iterations
+on several targets. This is why the full method does not
+hard-code one strategy but selects per iteration among all
+candidates via the criterion of Theorems 2–3 (Algorithm 1);
+these fixed-strategy numbers merely isolate each rule, and per-
+step selection upper-bounds any single fixed choice.
+b) Effect of Learning Rate:We next vary the learning
+rateη∈ {10 −4,10 −5,10 −6}while keepingα= 1. As
+summarised in Fig. 5,η= 10 −4 strikes the best balance
+between fast convergence and stability, yielding the highest
+ASR and the steepest rise in Kullback–Leibler (KL) diver-
+gence. Smaller values under-explore the parameter space and
+therefore realise only marginal improvements, whereas larger
+
+=== PAGE 9 ===
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016
+/uni00000020/uni00000014/uni00000003/uni0000002e/uni0000002f/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056
+/uni00000020/uni00000015/uni00000003/uni0000002e/uni0000002f/uni00000003/uni0000002f/uni00000052/uni00000056/uni00000056
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000013/uni00000011/uni00000013/uni0000001b
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000013/uni00000011/uni00000015/uni00000013
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000018/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000013/uni00000011/uni00000015/uni00000013
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000014/uni00000013/uni00000014
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni00000035/uni00000048/uni00000056/uni00000010/uni00000014/uni00000018/uni00000015
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000035/uni00000048/uni00000056/uni00000010/uni00000059/uni00000015
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016/uni00000010/uni00000044/uni00000047/uni00000059
+/uni00000014/uni00000015/uni00000016/uni00000017/uni00000018/uni00000019/uni0000001a/uni0000001b/uni0000001c/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+/uni0000002c/uni00000051/uni00000046/uni00000010/uni00000059/uni00000016/uni00000010/uni00000044/uni00000047/uni00000059/uni00000010/uni00000048/uni00000051/uni00000056/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000013/uni00000011/uni00000013/uni0000001b
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000019
+/uni00000020/uni00000014/uni00000003/uni00000024/uni00000036/uni00000035
+/uni00000020/uni00000015/uni00000003/uni00000024/uni00000036/uni00000035
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000014
+/uni00000013/uni00000011/uni00000013/uni00000015
+/uni00000013/uni00000011/uni00000013/uni00000016
+/uni00000013/uni00000011/uni00000013/uni00000017
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000013
+/uni00000013/uni00000011/uni00000013/uni00000018
+/uni00000013/uni00000011/uni00000014/uni00000013
+/uni00000013/uni00000011/uni00000014/uni00000018
+Fig. 6. Performance of P3A on various models under different attack step sizesα. The x-axis is attack steps; the left y-axis is the change in KL loss and the
+right y-axis is the change in ASR.
+values (not shown) occasionally destabilise optimisation and
+can even reverse gains.
+c) Effect of Attack Step Sizeα:Fig. 6 reports the
+influence of the step sizeα∈ {1,2}while the learning rate
+is fixed. A unit step (α= 1) is consistently superior for
+most models, achieving on average2.4%higher ASR than
+α= 2. The larger step can be advantageous when the number
+of iterations is increased substantially, but its benefits vanish
+under the ten-step regime adopted in our main experiments.
+These findings suggest that moderate, well-controlled pertur-
+bations allow parameter adaptation to target more informative
+directions without overshooting.
+d) Take-away.:Among the factors studied, theDefensive
+Perspectiveupdate rule delivers the largest performance boost,
+followed by a learning rate of10 −4 and a modest step size
+α= 1. These settings form the default configuration for P3A
+in all subsequent experiments.
+Notably, we observe that P3A yields the most significant
+improvements on adversarially trained models and in cross-
+architecture transfer scenarios (e.g., CNNViT), suggesting
+that our method is particularly effective in challenging attack
+settings where conventional approaches tend to struggle.
+e) Why adapting parameters helps DSP .:The criterion
+of Theorems 2–3 keeps a parameter update only when the
+induced change in the input gradient,g ′
+θ −g θ, is positively
+correlated with the current directiong θ. Intuitively, this selects
+parameter perturbations thatsharpenthe loss landscape along
+the very direction the attack is already exploiting, rather than
+rotating it arbitrarily. Two observations make this concrete.
+First, the gain is largest precisely where the fixed-parameter
+gradient is least reliable: against adversarially trained and
+ensemble-defended targets, whose decision boundaries are
+deliberately flattened around clean inputs, a small surrogate
+adaptation recovers a steeper, more informative ascent di-
+rection, which is consistent with the10–25point margins
+we observe there. Second, in cross-architecture transfer the
+surrogate gradient is biased toward source-specific features;
+theDefensive Perspectiveupdate—gradient ascent on the loss
+with respect toθ—pushes the surrogate toward parameters that
+emphasize broadly shared, transfer-friendly features, which
+helps explain its consistent edge over the gradient-freeUni-
+formandMagnituderules in Fig. 4. Crucially, because the
+adapted surrogate is reverted and the adversarial example is
+evaluated on the original model, these benefits manifest as a
+better updatedirectionrather than as an artifact of a weakened
+evaluation model. Together with the per-iteration selection, this
+explains why P3A improves a range of base attacks (Figs. 2, 3)
+without method-specific tuning.
+D. Limitations
+We note several limitations that delineate the scope of our
+claims and motivate future work.(i) Perturbation norm.Our
+experiments use the standardℓ ∞ budget; while the DSP/DOP
+decomposition and the DFD criterion are norm-agnostic, the
+interaction between parameter adaptation and other constraints
+(e.g.ℓ 2) and the resulting perceptual quality of the adversarial
+examples remain to be studied.(ii) Task and modality.We eval-
+uate on ImageNet classification; extending P3A to detection,
+segmentation, regression, or to non-image modalities such as
+text and tabular data is left open, although the formulation
+only assumes a differentiable loss.(iii) Compute.As analyzed
+above, P3A multiplies the per-step gradient cost by1 + 2|F |;
+for sources that already transfer well the extra cost may
+outweigh the marginal gain, so the candidate set should be
+sized to the compute budget.(iv) Order of approximation.The
+selection criterion is first-order (Taylor plus DFD); higher-
+order corrections could yield a tighter rule but at additional
+cost.
+
+=== PAGE 10 ===
+V. CONCLUSION
+In conclusion, this work presents a comprehensive examina-
+tion of adversarial attacks through the lens of the Directional
+Supervision Process (DSP) and the Directional Optimization
+Process (DOP), delineating a nuanced approach to enhancing
+the efficacy of such attacks via Parameter Adaptive adver-
+sarial attack (P3A) methodology. By identifying the role of
+parameter fine-tuning and introducing four parameter-update
+strategies, we demonstrate consistent improvements in adver-
+sarial attack strategies. Our experimental validation indicates
+the robustness and versatility of our approach across various
+models and attack vectors. This work focuses on non-targeted
+attacks, which aim to induce any incorrect model prediction;
+extending P3A to targeted attack settings is left for future
+work. Looking forward, we aim to explore the implications
+of extending the parameter exploration to more iterations and
+incorporating higher-order properties in the DSP, potentially
+unveiling deeper insights into model vulnerabilities and ad-
+vancing the state of adversarial attack methodologies.
+REFERENCES
+[1] N. Akhtar, A. Mian, N. Kardan, and M. Shah, “Advances in adversarial
+attacks and defenses in computer vision: A survey,”IEEE Access, vol. 9,
+pp. 155 161–155 196, 2021.
+[2] Y . Dong, F. Liao, T. Pang, H. Su, J. Zhu, X. Hu, and J. Li, “Boosting
+adversarial attacks with momentum,” inProceedings of the IEEE confer-
+ence on computer vision and pattern recognition, 2018, pp. 9185–9193.
+[3] C. Xie, Z. Zhang, Y . Zhou, S. Bai, J. Wang, Z. Ren, and A. L. Yuille,
+“Improving transferability of adversarial examples with input diversity,”
+inProceedings of the IEEE/CVF conference on computer vision and
+pattern recognition, 2019, pp. 2730–2739.
+[4] J. Lin, C. Song, K. He, L. Wang, and J. E. Hopcroft, “Nesterov
+accelerated gradient and scale invariance for adversarial attacks,”arXiv
+preprint arXiv:1908.06281, 2019.
+[5] I. J. Goodfellow, J. Shlens, and C. Szegedy, “Explaining and harnessing
+adversarial examples,”arXiv preprint arXiv:1412.6572, 2014.
+[6] A. Kurakin, I. J. Goodfellow, and S. Bengio, “Adversarial examples
+in the physical world,” inArtificial intelligence safety and security.
+Chapman and Hall/CRC, 2018, pp. 99–112.
+[7] A. Madry, A. Makelov, L. Schmidt, D. Tsipras, and A. Vladu, “Towards
+deep learning models resistant to adversarial attacks,”arXiv preprint
+arXiv:1706.06083, 2017.
+[8] N. Carlini and D. Wagner, “Towards evaluating the robustness of neural
+networks,” in2017 ieee symposium on security and privacy (sp). Ieee,
+2017, pp. 39–57.
+[9] Y . Dong, T. Pang, H. Su, and J. Zhu, “Evading defenses to transferable
+adversarial examples by translation-invariant attacks,” inProceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition,
+2019, pp. 4312–4321.
+[10] W. Ma, Y . Li, X. Jia, and W. Xu, “Transferable adversarial attack for
+both vision transformers and convolutional networks via momentum
+integrated gradients,” inProceedings of the IEEE/CVF International
+Conference on Computer Vision, 2023, pp. 4630–4639.
+[11] H. Zhu, Y . Ren, X. Sui, L. Yang, and W. Jiang, “Boosting adversarial
+transferability via gradient relevance attack,” inProceedings of the
+IEEE/CVF International Conference on Computer Vision, 2023, pp.
+4741–4750.
+[12] D. Wu, Y . Wang, S.-T. Xia, J. Bailey, and X. Ma, “Skip connections
+matter: On the transferability of adversarial examples generated with
+ResNets,” inInternational Conference on Learning Representations,
+2020.
+[13] Y . Li, S. Bai, Y . Zhou, C. Xie, Z. Zhang, and A. Yuille, “Learning
+transferable adversarial examples via ghost networks,” inProceedings
+of the AAAI Conference on Artificial Intelligence, vol. 34, no. 07, 2020,
+pp. 11 458–11 465.
+[14] M. Gubri, M. Cordy, M. Papadakis, Y . L. Traon, and K. Sen, “Lgv:
+Boosting adversarial example transferability from large geometric vicin-
+ity,” inEuropean Conference on Computer Vision. Springer, 2022, pp.
+603–618.
+[15] F. Tramèr, A. Kurakin, N. Papernot, I. Goodfellow, D. Boneh, and
+P. McDaniel, “Ensemble adversarial training: Attacks and defenses,”
+arXiv preprint arXiv:1705.07204, 2017.
+[16] Z. Lu, H. Hu, S. Huo, and S. Li, “Ensemble learning methods of
+adversarial attacks and defenses in computer vision: Recent progress,”
+in2021 International Conference on Advanced Computing and Endoge-
+nous Security. IEEE, 2022, pp. 1–10.
+[17] F. Croce, M. Andriushchenko, V . Sehwag, E. Debenedetti, N. Flammar-
+ion, M. Chiang, P. Mittal, and M. Hein, “Robustbench: a standardized
+adversarial robustness benchmark,”arXiv preprint arXiv:2010.09670,
+2020.
+[18] R. C. James, “Advanced calculus belmont,”Calif.: Wadsworth, p. 119,
+1966.
+[19] J. Zhang, W. Wu, J.-t. Huang, Y . Huang, W. Wang, Y . Su, and M. R.
+Lyu, “Improving adversarial transferability via neuron attribution-based
+attacks,” inProceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, 2022, pp. 14 993–15 002.
+[20] Y . Long, Q. Zhang, B. Zeng, L. Gao, X. Liu, J. Zhang, and J. Song,
+“Frequency domain model augmentation for adversarial attack,” in
+European Conference on Computer Vision. Springer, 2022, pp. 549–
+566.
+[21] O. Russakovsky, J. Deng, H. Su, J. Krause, S. Satheesh, S. Ma,
+Z. Huang, A. Karpathy, A. Khosla, M. Bernstein, A. C. Berg, and
+L. Fei-Fei, “ImageNet Large Scale Visual Recognition Challenge,”
+International Journal of Computer Vision (IJCV), vol. 115, no. 3, pp.
+211–252, 2015.
+[22] C. Szegedy, V . Vanhoucke, S. Ioffe, J. Shlens, and Z. Wojna, “Rethinking
+the inception architecture for computer vision,” inProceedings of the
+IEEE conference on computer vision and pattern recognition, 2016, pp.
+2818–2826.
+[23] C. Szegedy, S. Ioffe, V . Vanhoucke, and A. Alemi, “Inception-v4,
+inception-resnet and the impact of residual connections on learning,” in
+Proceedings of the AAAI conference on artificial intelligence, vol. 31,
+no. 1, 2017.
+[24] K. He, X. Zhang, S. Ren, and J. Sun, “Deep residual learning for image
+recognition,” inProceedings of the IEEE conference on computer vision
+and pattern recognition, 2016, pp. 770–778.
+[25] A. Kurakin, I. Goodfellow, and S. Bengio, “Adversarial machine learning
+at scale,”arXiv preprint arXiv:1611.01236, 2016.
+[26] A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai,
+T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gellyet al.,
+“An image is worth 16x16 words: Transformers for image recognition
+at scale,”arXiv preprint arXiv:2010.11929, 2020.
+[27] Z. Tu, H. Talebi, H. Zhang, F. Yang, P. Milanfar, A. Bovik, and Y . Li,
+“Maxvit: Multi-axis vision transformer,” inEuropean conference on
+computer vision. Springer, 2022, pp. 459–479.
+[28] Z. Fang, R. Wang, T. Huang, and L. Jing, “Strong transferable adversar-
+ial attacks via ensembled asymptotically normal distribution learning,”
+inProceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition (CVPR), June 2024, pp. 24 841–24 850.
+[29] Z. Li, W. Wang, J. Li, K. Chen, and S. Zhang, “Foolmix: Strengthen the
+transferability of adversarial examples by dual-blending and direction
+update strategy,”IEEE Transactions on Information Forensics and
+Security, vol. 19, pp. 5286–5300, 2024.
+[30] Z. Jin, J. Zhang, Z. Zhu, and H. Chen, “Benchmarking transferable
+adversarial attacks,”arXiv preprint arXiv:2402.00418, 2024.

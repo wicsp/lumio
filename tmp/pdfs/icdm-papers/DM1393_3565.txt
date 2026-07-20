@@ -1,0 +1,1074 @@
+=== PAGE 1 ===
+SAGE: Safety-Aware Grounding with
+External-Knowledge Enhancement for Safety
+Alignment of Multimodal Large Language Models
+1st Given Name Surname
+dept. name of organization (of Aff.)
+name of organization (of Aff.)
+City, Country
+email address or ORCID
+2nd Given Name Surname
+dept. name of organization (of Aff.)
+name of organization (of Aff.)
+City, Country
+email address or ORCID
+3rd Given Name Surname
+dept. name of organization (of Aff.)
+name of organization (of Aff.)
+City, Country
+email address or ORCID
+4th Given Name Surname
+dept. name of organization (of Aff.)
+name of organization (of Aff.)
+City, Country
+email address or ORCID
+5th Given Name Surname
+dept. name of organization (of Aff.)
+name of organization (of Aff.)
+City, Country
+email address or ORCID
+6th Given Name Surname
+dept. name of organization (of Aff.)
+name of organization (of Aff.)
+City, Country
+email address or ORCID
+Abstract—Multimodal Large Language Models (MLLMs) have
+shown strong capabilities in visual understanding, reasoning,
+and instruct following. However, their safety alignment remains
+fragile when facing complex multimodal inputs and cross-modal
+reasoning. While significant progress has been made in text-based
+safety alignment for LLMs, MLLMs frequently produce unsafe
+responses in context-dependent scenarios that require reasoning
+over both the visual scene and the text inputs. Existing inference-
+time defenses either steer generation with safety prefixes or
+transform images into textual descriptions, remain deficient
+in addressing context-dependent multimodal safety risks. To
+enhance the safety of MLLMs, we propose SAGE (Safety-
+Aware Grounding with External-Knowledge Enhancement), a
+novel training-free alignment method consisting of two key
+components: first, it elicits the model’s intrinsic safety reasoning
+via a structured, multi-step prompting strategy; second, it com-
+pensates for internal knowledge gaps by leveraging a curated
+external safety knowledge base. Extensive experiments on public
+safety benchmarks demonstrate that SAGE substantially reduces
+unsafe responses across multiple backbone models. Notably, it
+reduces the Unsafe Response Rate (USR) by up to 55.33%
+on MSSBench compared with vanilla InternVL3.5-14B, while
+maintaining general utility and improving ScienceQA accuracy
+from 81.86% to 84.31%. The code and safety knowledge base
+will be publicly released upon acceptance.
+Index Terms—Multimodal Large Language Models, AI Safety,
+Safety Alignment, Knowledge Base, Prompt Engineering
+I. INTRODUCTION
+Multimodal Large Language Models have recently achieved
+remarkable progress in vision-language understanding and rea-
+soning. Typically, MLLMs integrate a vision encoder, such as
+ViT, with a large language model through a cross-modal pro-
+jection or fusion module [1, 2]. The vision encoder transforms
+input images into visual features, which are then mapped into
+Identify applicable funding agency here. If none, delete this.
+the textual embedding space and processed by the LLM to
+generate responses. Benefiting from this architecture, MLLMs
+have shown strong performance on various multimodal tasks,
+including visual question answering (VQA) [3] and image-text
+understanding [4].
+Despite these capabilities, MLLMs face serious safety
+challenges. While significant efforts have been devoted to
+the textual safety alignment of LLMs (e.g., RLHF, SFT)[5]
+and enhancing MLLMs’ general instruction-following abilities
+[6], research on safety alignment specifically for multimodal
+scenarios remains relatively scarce. Existing multimodal safety
+datasets are limited in both scale and coverage, hindering the
+safety alignment and deployment of MLLMs in complex real-
+world scenarios.
+Recently, several training-free methods [7, 8, 9] have been
+proposed to improve the MLLM safety at inference time.
+However, these approaches suffer from two key limitations.
+First, simple interventions like safety prefixes often result in
+only shallow activation of the model’s reasoning capability,
+proving insufficient for handling implicit malicious intents
+[10, 7]. Second, they rely heavily on the model’s intrinsic
+safety knowledge, which is often incomplete due to the limited
+coverage and granularity of current safety training data [11].
+This gap is exacerbated in multimodal contexts where even
+individually safe input modalities can combine to produce
+harmful outputs, a problem requiring robust, long-chain rea-
+soning [12, 13].
+To address these limitations, we propose SAGE, a novel
+training-free safety alignment method that enhances MLLM
+safety from two complementary perspectives. First, we design
+a targeted, multi-step prompting strategy that guides the model
+through image description, query rewriting, and intent analy-
+sis, thereby more fully unlocking its intrinsic safety reasoning
+
+=== PAGE 2 ===
+capabilities. Second, we construct an external knowledge base
+that provides structured safety knowledge during inference.
+This allows the model to perform reflection and generation
+grounded in explicit safety rules, compensating for deficiencies
+in its internal safety awareness.
+The main contributions of our work are summarized as
+follows:
+•We design a multi-step risk reasoning strategy that guides
+MLLMs to perform image description, query rewriting
+and intent analysis, enabling more fine-grained under-
+standing of multimodal safety risks.
+•We construct an external safety knowledge base to pro-
+vide structured safety guidance during inference, allowing
+the model to reflect on potential risks and generate safer
+responses.
+•We conduct extensive experiments on multiple multi-
+modal safety benchmarks to verify that SAGE signifi-
+cantly reduces unsafe responses while preserving general
+multimodal capabilities.
+II. RELATEDWORK
+Fine-tuning-based alignment.Conventional alignment of
+MLLMs with human preferences relies on fine-tuning-based
+strategies, such as RLHF[5] or supervised fine-tuning on
+curated datasets[14]. Some methods also use architectural
+modifications, e.g., inserting pre-trained classifiers to assess
+unsafe content[8].
+These training-based approaches share systemic limitations:
+they are resource-intensive, may undermine general MLLM
+capabilities through imbalanced training data, and remain
+domain-specific and thus are vulnerable to novel attacks and
+adversarial inputs.
+Training-free Safety Alignment.Recent studies explore
+training-free methods that directly intervene during inference.
+Gou et al. propose ECSO[7], based on the observation that
+the safety mechanism of pre-aligned LLMs is suppressed by
+image features. ECSO detects harmful content in the initial
+response, converts the image to text via query-aware image-to-
+text transformation, and regenerates the response solely from
+the resulting text by activating the intrinsic safety mechanism
+of LLMs.
+Ding et al. propose ETA[8], grounded in the insight that
+continuous visual embeddings cause safety failures. ETA
+builds a two-stage “Evaluation-Alignment” framework: it com-
+bines CLIP-based pre-generation and reward model-based
+post-generation evaluations, then employs a dual-level align-
+ment consisting of shallow safety prefix as well as sentence-
+level best-of-N search to guide safe and useful generation.
+Zhu et al. propose GuardAlign[9], which uses optimal trans-
+port to detect unsafe visual regions by measuring distances
+between image patches and unsafe prompts, then masks those
+regions. It also designs a cross-modal attention calibration to
+reinforce safety prefix tokens throughout decoding, ensuring
+consistent safety signals.
+While existing training-free methods focus on input trans-
+formation (ECSO, GuardAlign) or output guidance (ETA,
+GuardAlign), our SAGE enhances the core reasoning process
+itself. By structuring the model’s ”thought process” and aug-
+menting it with external knowledge, we enable a deeper and
+more robust form of safety alignment.
+III. METHODOLOGY
+In this section, we propose SAGE, a safety-knowledge-
+enhanced prompt-based alignment method to improve the safe
+generation in MLLMs at inference time. SAGE is training-
+free and relies on prompt engineering and an external safety
+knowledge base, rather than parameter updates, to guide step-
+by-step safety reasoning. As shown in Fig. 1, the overall
+workflow consists of three sequential stages.
+A. Grounded Behavior Summary and Intent Classification
+MLLMs often show asymmetric safety awareness across
+modalities. While the underlying LLM has extensive text-
+based safety training, it is less sensitive to visual content,
+which can be exploited to bypass safety checks. Previous work
+[7] attempted to convert images into textual descriptions and
+directly apply text-based safe generation; however, it fails to
+elicit fine-grained safety reasoning for the cases where both
+input image and textual query are safe and the hazard is
+implicit in their interaction.
+To address this limitation, we design a chain-of-thought-
+style prompt to guide the model to construct a unified,
+semantically rich scene representation and infer the user’s true
+intention. This is particularly important in multimodal scenar-
+ios, where unsafe intent may be distributed across both visual
+content and textual instructions. Prior work on multimodal
+chain-of-thought also suggests that separating intermediate
+rationale generation from final prediction can help models
+better use multimodal information [15].
+Formally, given a user requestxand an imageI, we first
+prompt the target MLLMF θ to generate a detailed textual
+description of the image:
+d(I) =F θ(I, Pdesc)(1)
+whereF θ denotes the target MLLM andP desc denotes the
+image description instruction, with the full prompt provided
+in Appendix B1. This step encourages the model to identify
+safety-relevant visual elements, such as objects, locations, and
+contextual cues, thereby converting visual information into a
+form more compatible with the text-oriented safety capability
+of LLMs.
+Next, the model rewrites the original query by grounding it
+in the image description. Specifically, we prompt the model to
+resolve vague references, such as personal pronouns, locative
+adverbs, and noun phrases, by replacing them with the corre-
+sponding visual entities in the image. The rewritten query is
+represented as:
+˜x=Fθ(d(I), x, Prewrite),(2)
+where˜xis the rewritten user request,P rewrite is the rewriting
+instruction, provided in Appendix B1. Instead of simply con-
+catenatingd(I)andx, this step constructs a unified behavior
+
+=== PAGE 3 ===
+Fig. 1. Overview of our three-round safety-aware response generation framework. Round 1 uses CAT TEMPLATE to produce a grounded behavior summary
+and intent classification from the input image and user query, where CAT TEMPLATE consists of three promptsP desc,P rewrite, andP cls. Round 2 retrieves
+candidate safety knowledge from the knowledge base and applies prompt MAT TEMPLATE to determine whether any retrieved rule matches the grounded
+behavior. In Round 3, the model conditionally generates the final response: if a rule is matched, RES TEMPLATE instantiates the response-generation prompts,
+includingP reflect andP generation, to support consequence reflection and safe response generation; otherwise, RES NONE TEMPLATE instantiatesP answer
+to directly answer the original query. The full contents of all prompts are provided in Appendix B.
+summary that specifies the user’s intended action, the involved
+visual entities, and the relevant context. In this way, the model
+is encouraged to treat the image and query as a coherent real-
+world scenario rather than independent inputs.
+Finally, the model performs intent classification based on
+the grounded behavior summary:
+C={c p, cs}=F θ(˜x, Pcls),(3)
+whereP cls, as detailed in Appendix B1, represents the clas-
+sification guidance andCis the predicted intention category.
+To better handle overlapping risks and improve knowledge
+retrieval, the model outputs both a primary categoryc p and
+a secondary categoryc s, which are constrained to the risk
+categories defined in our knowledge base.
+B. Knowledge Base Construction, Retrieval, and Matching
+After image description and question rewriting, MLLMs
+may lack specific security knowledge when dealing with
+security-sensitive scenarios, potentially generating harmful
+content. This inspires us to construct a safety knowledge
+base and feed it into the model as prompts to support safety
+reasoning.
+Knowledge Base Construction.After analyzing frequently
+encountered safety issues in existing datasets, we manually
+construct a safety knowledge base containing 9 unsafe cat-
+egories and 93 corresponding safety rules. Since different
+datasets often use inconsistent safety labels and different
+levels of granularity, we first map original risk labels into
+a unified category taxonomy. Specifically, similar labels are
+merged into the following nine unsafe categories: Self-Harm
+and Suicide, Dangerous Behavior, Immorality Behavior, Illegal
+Activity, Controversial Topic, Discrimination and Unequal
+Treatment, Religion Beliefs, Information Misinterpretation,
+and Privacy Violation. Detailed examples of the safety rules in
+the knowledge base are presented in Appendix A, using Self-
+Harm and Suicide and Information Misinterpretation as two
+representative categories. The Safe category is treated as the
+default state when none of the unsafe categories is triggered.
+This unified taxonomy enables data from different sources
+to be fused within the same semantic space and reduces
+inconsistencies caused by label naming differences, granularity
+mismatch, and ambiguous category boundaries. The detailed
+category partition and statistical distribution of the rules in the
+established knowledge base are summarized in Table I.
+During construction, we do not restrict knowledge entries
+to a single ”action-consequence” format. Instead, each entry is
+defined for a general risk situation. This design is motivated by
+the fact that risks in multimodal safety question answering do
+not always appear as explicit dangerous operations. Some risks
+originate from the user’s intention or expression, some from
+contextual constraints in the image, and others from legal rules,
+religious or cultural taboos, or privacy boundaries. Therefore,
+
+=== PAGE 4 ===
+TABLE I
+STATISTICS OF THE EXTERNAL SAFETY KNOWLEDGE BASE.
+Category Rules
+Self-Harm and Suicide 7
+Dangerous Behavior 23
+Immorality Behavior 10
+Illegal Activity 11
+Controversial Topic 10
+Discrimination and Unequal Treatment 6
+Religion Beliefs 13
+Information Misinterpretation 6
+Privacy Violation 7
+All 93
+when extracting knowledge from safety-related datasets, we
+focus on core risk patterns that trigger safety judgments rather
+than surface-level query texts.
+Specifically, for each sample in datasets, we first analyze the
+relationship between the user request and the visual context,
+and the potential risks. Four types of information are then
+extracted: the risk trigger, the contextual constraint, the po-
+tential consequence, and the corresponding risk category. The
+risk trigger refers to the intention, behavior, or expression in
+the user request that may lead to a safety issue. The contextual
+constraint refers to scenes provided by the image or text, such
+as library or religious sites. The potential consequence de-
+scribes possible negative outcomes, including physical injury,
+legal violation, social offense, privacy leakage, misinforma-
+tion, or disruption of public order. The risk category is used
+to map the extracted knowledge entry into the unified safety
+taxonomy.
+Since different risks are expressed in different forms, we de-
+sign knowledge entries at multiple levels of granularity, includ-
+ing: (1) intention-expression risk knowledge, which identifies
+dangerous or implicit intentions in user requests; (2) action–
+scene–consequence risk knowledge, which describes harmful
+outcomes of specific behaviors in particular environments;
+and (3) norm-constraint risk knowledge, which captures non-
+physical risks related to public order, legal rules, academic
+integrity, and religious culture.
+Let the safety knowledge base be denoted as:
+B={B c |c∈ C},(4)
+whereCis the predefined set of nine safety categories, and
+Bc denotes the set of safety rules associated with categoryc.
+Each rule can be represented as:
+rc
+i = (id c
+i , description c
+i ),(5)
+whereid c
+i is the rule identifier anddescription c
+i describes a
+specific safety concern or prohibited behavior.
+Knowledge Retrieval.Based on the classification resultsC
+in equation (3), we can retrieve the corresponding knowledge
+entries from the knowledge base:
+Kp =B cp , K s =B cs .(6)
+The final retrieved knowledge is obtained by combining the
+knowledge from both categories:
+K=K p ∪K s (7)
+Retrieving knowledge from both the primary and secondary
+categories helps handle overlapping risk signals and avoid
+missing relevant safety constraints. Compared with inject-
+ing the entire knowledge base, category-conditioned retrieval
+reduces irrelevant information, controls prompt length, and
+improves the specificity of subsequent consequence analysis.
+This makes external safety guidance more efficient, scenario-
+relevant, and less likely to distract the model from key
+instructions.
+Through this category-guided retrieval mechanism, our
+framework equips the model with explicit and scenario-
+relevant safety knowledge at inference time, making subse-
+quent risk reasoning more grounded, interpretable, and con-
+trollable without additional training.
+Knowledge Matching.After retrieving category-specific
+safety knowledge, directly generating the final response may
+still be insufficient, because the model may fail to associate the
+retrieved rules with the concrete user behavior. Therefore, we
+introduce an explicit knowledge matching step to bridge the
+grounded behavior and the retrieved safety knowledge. This
+step selects the rule most applicable to the current request
+and presents it as an explicit safety signal before response
+generation, helping the model infer potential risks and activate
+its internal safety mechanism.
+Given the image descriptiond(I), the behavior summary
+˜x, the predicted intention categoriesC, and the retrieved
+knowledgeK, the model first performs knowledge matching:
+m= (r, z) =F θ
+ 
+d(I),˜x, C, K, Pmatch
+
+,(8)
+whereP match guides the model to compare the grounded
+behavior with the retrieved safety knowledge and is presented
+as MAT TEMPLATE in Appendix B2. The outputmcontains
+the matched ruler, if any, and a binary matching indicatorz,
+which specifies whether the retrieved knowledge is applicable
+to the current request.
+C. Knowledge-Grounded Reflection and Generation
+The final response is generated conditionally. When a
+knowledge rule is matched, the model first conducts a con-
+sequence reflection:
+re=F θ
+ 
+d(I),˜x, C, Km, Preflect
+
+,(9)
+whereK m ⊆Kdenotes the matched rule(s),P reflect is the
+reflection prompt, andreexplains why the grounded behavior
+matchesK m and what negative consequences may occur. This
+follows the idea that intermediate reasoning or feedback can
+improve inference-time generation [13, 16, 17].
+The model then generates the final response based on the
+grounded behavior, matched knowledge, and the consequence
+reflection:
+y=F θ
+ 
+d(I),˜x, C, Km, re, Pgeneration
+
+.(10)
+
+=== PAGE 5 ===
+The two prompts,P reflect andP generation, together constitute
+the RES TEMPLATE, whose full content is provided in
+Appendix B3. In this case, the model is instructed to avoid
+unsafe behavior while providing a helpful response.
+When no retrieved rule matches the grounded behavior, the
+request is treated as not covered by the safety knowledge base,
+and the model directly answers the original question:
+y=F θ
+ 
+q, Panswer
+
+,(11)
+whereqdenotes the original user query (including user request
+xand imageI) andP answer constrains the output format. This
+prompt corresponds to the RES NONE TEMPLATE whose
+full content is provided in Appendix B3. This conditional de-
+sign reduces over-refusal for benign requests while enforcing
+safety constraints when the behavior matches retrieved knowl-
+edge. Compared with directly generating from retrieved rules,
+explicit matching and consequence reflection help connect
+abstract safety principles with concrete visual and behavioral
+contexts, improving the grounding and controllability of the
+final response.
+IV. EXPERIMENTS
+In this section, we conduct comprehensive empirical ex-
+periments to verify the efficacy of SAGE. We focus on three
+research questions: (1) Compared with existing baseline meth-
+ods, whether it can effectively enhance the safety performance
+of MLLMs against various risky multimodal queries? (2) Can
+it preserve the general utility of MLLMs on benign tasks? (3)
+How much does each key component, including the structured
+safety prompt for image description and question rewriting,
+and the external safety knowledge base, contribute to the
+overall safety improvement?
+A. Experimental Setup
+Datasets.We evaluate safety performance on several
+public multimodal safety benchmarks, including two types
+of datasets: (1) Jailbreak attack datasets, including MM-
+SafetyBench[18] and SPA-VL (Harm subset)[14]; (2) Safety-
+awareness datasets, including MSSBench[19] and SIUO[20].
+MSSBench and SIUO are employed to assess the model’s
+capability in perceiving implicit safety issues, while MM-
+SafetyBench and SPA-VL (Harm) focus on evaluating model
+robustness under adversarial attack scenarios. Detailed de-
+scriptions of each dataset are provided in the Appendix C1.
+Meanwhile, to evaluate the general capabilities of SAGE, we
+employ a series of widely used visual question answering and
+multimodal reasoning benchmarks, including ScienceQA[21],
+TextVQA[22] and MME[23]. More details about the bench-
+mark settings and evaluation protocols are provided in Ap-
+pendix C2.
+Baseline Models.We select several representative open-
+source MLLMs as backbone models for evaluation, in-
+cluding Qwen3-VL-4B-Instruct, Qwen3-VL-8B-Instruct[24],
+InternVL3.5-4B, InternVL3.5-8B, and InternVL3.5-14B[25].
+We conduct all experiments on an NVIDIA RTX 5090 GPU.
+During inferring, we setdo sample=F alseto ensure
+deterministic outputs for reproducibility.
+Comparison Methods.To comprehensively validate the ef-
+fectiveness of our proposed method, we compare the following
+approaches on each backbone model: (1)Direct Prompt-
+ingbaseline, where the backbone model generates responses
+without any defense mechanism; (2)ECSO, an inference-
+time defense method that activates the intrinsic safety mech-
+anisms of LLMs via image-to-text transformation; (3)ETA,
+an inference-time safety alignment framework that combines
+multimodal evaluation with bi-level alignment.
+B. Performance On Safety
+To assess the ability of SAGE to generate safe content, we
+compare it with two existing safety enhancement strategies,
+ECSO and ETA, across five representative multimodal models.
+Specifically, ECSO is evaluated on all five models, while ETA
+is evaluated on three models, excluding Qwen3 series, due to
+the substantial model-specific reproduction effort required for
+ETA.
+Evaluation Metrics.We adopt the Unsafe Response Rate
+(USR) as the primary metric for safety evaluation. USR is
+defined as the proportion of unsafe responses generated by
+the model among all responses, i.e.:
+USR= Nunsafe
+Ntotal
+whereN unsafe denotes the total number of responses classified
+as unsafe, andN total is the total number of test cases. A lower
+USR indicates stronger model safety.
+Evaluation Method.To determine whether the model-
+generated response is safe, we employ Qwen3.6-27B-
+Uncensored-HauhauCS-Balanced as a safety judge model. For
+each instance, the model receives the user query, a correspond-
+ing safety warning describing potential risks, the reference
+answer, and the model output. The judge is prompted to reason
+step by step in combination with these given information
+and output a structured judgement indicating whether the
+generated response is safe, along with a textual explanation
+of its reasoning. The detailed prompts for safety evaluation
+are presented in the Appendix D.
+SAGE provides effective and robust safety enhancement
+for MLLMs.Table II reports the USR of SAGE compared
+with two safety enhancement methods, ECSO and ETA, across
+multiple backbone models and four safety benchmarks. Vanilla
+MLLMs exhibit non-negligible safety risks under multimodal
+safety evaluation, particularly on SIUO and MSSBench, reach-
+ing around 60–80% USR on InternVL3.5. Existing defenses
+such as ECSO and ETA provide moderate improvements in
+some cases. In contrast, SAGE consistently reduces USR
+across all evaluated benchmarks, reducing the USR of Qwen3-
+VL models to about 20% on both SIUO and MSSBench
+datasets. It also outperforms ECSO and ETA on SPA-VL and
+MM-SafetyBench across different backbones, demonstrating
+its effectiveness against both implicit cross-modal risks and
+explicitly harmful multimodal inputs.
+
+=== PAGE 6 ===
+TABLE II
+USREVALUATION RESULTS ACROSS MULTIPLE SAFETY BENCHMARKS.
+Method SPA-VL MM-SafetyBench SIUO MSSBench
+Harm↓SD+TYPO↓Human↓Chat↓
+InternVL3.5-4B 16.98% 27.50% 69.46% 77.33%
++ECSO 12.08% 26.63% 71.26% 75.33%
++ETA 20.00% 28.00% 63.47% 74.67%
++Ours 6.75% 6.54% 32.93% 23.67%
+InternVL3.5-8B 16.60% 23.86% 70.66% 79.67%
++ECSO 9.06% 17.09% 65.87% 79.00%
++ETA 18.11% 20.00% 64.07% 77.00%
++Ours 3.57% 7.72% 37.13% 27.00%
+InternVL3.5-14B 10.57% 25.13% 62.87% 74.33%
++ECSO 10.57% 18.00% 61.68% 74.25%
++ETA 16.23% 20.00% 62.28% 75.67%
++Ours 3.59% 12.74% 23.95% 19.00%
+Qwen3-VL-4B 15.91% 12.12% 53.29% 54.33%
++ECSO 12.08% 16.08% 56.89% 53.67%
++Ours 4.76% 2.31% 23.95% 19.67%
+Qwen3-VL-8B 9.65% 14.50% 41.32% 47.67%
++ECSO 9.43% 16.08% 46.11% 37.33%
++Ours 3.24% 5.02% 17.96% 17.67%
+TABLE III
+GENERAL PERFORMANCE OFSAGE.
+Method ScienceQA↑TextVQA↑MMEP↑MMEC↑
+InternVL3.5-8B 81.86%75.00%1660.84656.42
++Ours 84.31%74.00%1673.20605.36
+Qwen3-VL-4B 86.76% 84.00% 1711.75 620.72
++Ours 85.78% 82.00% 1699.49 604.29
+Qwen3-VL-8B 90.68%85.00%1768.27 639.29
++Ours 89.71%87.00%1696.40 605.36
+C. General Performance
+In addition to safety evaluation, we further quantify the
+preservation of inherent general multimodal understanding
+capability of models after applying our safety defense strategy.
+Table III summarizes model performance across four main-
+stream multimodal benchmarks covering scientific reasoning,
+text-based VQA and comprehensive capability evaluation,
+including ScienceQA, TextVQA, MMEP, and MMEC, where
+higher values indicate better general performance.
+SAGE preserves the general performance of MLLMs.
+Based on the results shown in Table III, we observe that our
+safety-aware mechanism yields limited, task-specific perfor-
+mance variation rather than widespread utility impairment.
+To strengthen safety robustness, SAGE elevates the model’s
+sensitivity to suspicious risky inputs, leading to moderate
+performance degradation on MME benchmarks. Neverthe-
+less, performance gaps on ScienceQA and TextVQA remain
+marginal, and SAGE even brings measurable improvements for
+InternVL3.5-8B on ScienceQA as well as Qwen3-VL-8B on
+TextVQA. Overall, the results demonstrate that SAGE substan-
+TABLE IV
+ABLATION STUDY ON THESIUOBENCHMARK USINGQWEN3-VL-4B
+ANDINTERNVL3.5-14B.
+Dataset Qwen3-VL-4B InternVL3.5-14B
+vanilla w/o KB w/ KB vanilla w/o KB w/ KB
+SIUO 53.29% 24.55%23.95% 62.87% 26.35%23.95%
+tially improves safety while maintaining the core multimodal
+reasoning and generation capabilities of MLLMs.
+D. Ablation Study
+We conduct ablation experiments on the SIUO benchmark
+using Qwen3-VL-4B and InternVL3.5-14B to analyze the
+contribution of each component. In Table IV, w/o KB denotes
+the variant that keeps the safety-aware grounding module, in-
+cluding image description and question rewriting, but removes
+the external safety knowledge base, while w/ KB denotes the
+full setting. The results show that both the multimodal intent-
+analysis module (image description and question rewriting)
+and the external safety knowledge base contribute to the final
+safety improvement. Specifically, the image description and
+question rewriting module plays a major role, by grounding
+the user query in the visual context and enabling the model
+to identify potential risks from multimodal inputs before
+generation. On top of this safety-aware representation, the
+external safety knowledge base further provides explicit and
+structured safety constraints, which help the model make more
+reliable judgments and suppress residual unsafe responses.
+Although the improvement brought by the knowledge base
+is moderate compared with the front-end intent analysis mod-
+ule, removing it consistently leads to higher USR, indicating
+that the knowledge base provides additional safety gains. This
+suggests that the safety knowledge base plays a complemen-
+tary and beneficial role by supplying external safety evidence
+for complex or ambiguous cases.
+E. Inference Efficiency Analysis
+We further analyze the inference efficiency of SAGE. Since
+training-free safety alignment methods usually introduce ad-
+ditional inference-time operations, it is important to evaluate
+whether the improved safety performance comes with ex-
+cessive computational overhead. Therefore, we compare the
+average inference time per sample between ECSO and SAGE.
+ECSO performs safety enhancement by first detecting unsafe
+responses and then regenerating answers based on image-to-
+text transformation. In contrast, SAGE introduces a multi-
+stage reasoning process, including image description, question
+rewriting, intention classification, knowledge retrieval, knowl-
+edge matching, and safety-aware response generation. When
+only the front-end intent analysis module is used and the
+knowledge base is removed from generation, which still yields
+good results as shown in Table IV for the case ”w/o KB”, the
+average inference time of our method is about 5.0 s, similar
+to that of ECSO. The inference time is around 10 20 s for the
+
+=== PAGE 7 ===
+full version of SAGE, depending on sample. One can make
+trade-offs between safety and inference efficiency by choosing
+whether to retain the knowledge base. Overall, SAGE achieves
+a good balance between safety improvements and inference
+efficiency.
+V. CONCLUSIONS
+In this paper, we propose SAGE, a novel training-free
+framework for enhancing the safety alignment of multimodal
+large language models. SAGE leverages step-by-step reasoning
+and external safety knowledge enhancement to address the
+challenges of cross-modal safety issues. By integrating a struc-
+tured safety-aware prompt and a manually constructed compre-
+hensive safety knowledge base, SAGE guides MLLMs through
+grounded behavior summarization, intent classification, knowl-
+edge retrieval and rule matching to foster knowledge-grounded
+reflection and ultimately produce safer responses. Our exten-
+sive experiments on various safety benchmarks demonstrate
+that SAGE significantly reduces the Unsafe Response Rate
+across different MLLM backbones, outperforming existing
+defense strategies by a large margin. Crucially, SAGE achieves
+this robust safety improvement while largely preserving the
+models’ general utility and generative capabilities.
+In the future, we will focus on two key directions: first, ex-
+panding and dynamically updating the safety knowledge base,
+potentially through automated knowledge mining from real-
+world interactions; second, designing more efficient knowl-
+edge retrieval mechanisms to reduce latency.
+REFERENCES
+[1] J. Li, D. Li, S. Savarese, and S. Hoi, “Blip-
+2: Bootstrapping language-image pre-training with
+frozen image encoders and large language models,”
+inProceedings of the 40th International Conference
+on Machine Learning, ser. Proceedings of Machine
+Learning Research, vol. 202, 23–29 Jul 2023, pp.
+19 730–19 742. [Online]. Available: https://proceedings.
+mlr.press/v202/li23q.html
+[2] H. Liu, C. Li, Q. Wu, and Y . J. Lee, “Visual instruction
+tuning,” inAdvances in Neural Information Processing
+Systems, vol. 36, 2023, pp. 34 892–34 916. [Online].
+Available: https://proceedings.neurips.cc/paper files/pap
+er/2023/file/6dcf277ea32ce3288914faf369fe6de0-Paper
+-Conference.pdf
+[3] B. Liu, L.-M. Zhan, L. Xu, L. Ma, Y . Yang, and
+X.-M. Wu, “Slake: A semantically-labeled knowledge-
+enhanced dataset for medical visual question answering,”
+in2021 IEEE 18th International Symposium on Biomed-
+ical Imaging (ISBI), 2021, pp. 1650–1654.
+[4] C. Li, C. Wong, S. Zhang, N. Usuyama, H. Liu, J. Yang,
+T. Naumann, H. Poon, and J. Gao, “Llava-med: Training
+a large language-and-vision assistant for biomedicine in
+one day,” inAdvances in Neural Information Processing
+Systems, vol. 36, 2023, pp. 28 541–28 564. [Online].
+Available: https://proceedings.neurips.cc/paper files/pap
+er/2023/file/5abcdf8ecdcacba028c6662789194572-Paper
+-Datasets and Benchmarks.pdf
+[5] L. Ouyang, J. Wu, X. Jianget al., “Training language
+models to follow instructions with human feedback,”
+inAdvances in Neural Information Processing Systems,
+vol. 35, 2022, pp. 27 730–27 744. [Online]. Available:
+https://proceedings.neurips.cc/paper files/paper/2022/fil
+e/b1efde53be364a73914f58805a001731-Paper-Confere
+nce.pdf
+[6] Y . Zong, O. Bohdal, T. Yu, Y . Yang, and T. Hospedales,
+“Safety fine-tuning at (Almost) no cost: A baseline for
+vision large language models,” inProceedings of the
+41st International Conference on Machine Learning, ser.
+Proceedings of Machine Learning Research, vol. 235,
+21–27 Jul 2024, pp. 62 867–62 891. [Online]. Available:
+https://proceedings.mlr.press/v235/zong24a.html
+[7] Y . Gou, K. Chen, Z. Liu, L. Hong, H. Xu, Z. Li,
+D. Yeung, J. T. Kwok, and Y . Zhang, “Eyes closed,
+safety on: Protecting multimodal llms via image-to-text
+transformation,” pp. 388–404, 2024. [Online]. Available:
+https://doi.org/10.1007/978-3-031-72643-9 23
+[8] Y . Ding, B. Li, and R. Zhang, “ETA: Evaluating then
+aligning safety of vision language models at inference
+time,” inThe Thirteenth International Conference on
+Learning Representations, 2025. [Online]. Available:
+https://openreview.net/forum?id=QoDDNkx4fP
+[9] X. Zhu, B. Zhu, J. Fang, S. Wang, Y . Zhang, X. Wang,
+and X. He, “Guardalign: Test-time safety alignment in
+multimodal large language models,” inThe Fourteenth
+International Conference on Learning Representations,
+2026. [Online]. Available: https://openreview.net/forum
+?id=YcoS3uq5kt
+[10] E. Shayegani, M. A. A. Mamun, Y . Fu, P. Zaree, Y . Dong,
+and N. Abu-Ghazaleh, “Survey of vulnerabilities in large
+language models revealed by adversarial attacks,” 2023.
+[Online]. Available: https://arxiv.org/abs/2310.10844
+[11] S. Yin, C. Fu, S. Zhao, K. Li, X. Sun, T. Xu, and
+E. Chen, “A survey on multimodal large language
+models,”National Science Review, vol. 11, no. 12, Nov.
+2024. [Online]. Available: http://dx.doi.org/10.1093/nsr
+/nwae403
+[12] W. Cai, S. Liu, J. Zhao, Z. Shi, Y . Zhao, Y . Yuan,
+T. Zhang, C. Zhang, and X. Li, “When safe unimodal
+inputs collide: Optimizing reasoning chains for cross-
+modal safety in multimodal large language models,”
+inProceedings of the AAAI Conference on Artificial
+Intelligence, vol. 40, no. 42, 2026, pp. 35 322–35 330.
+[Online]. Available: https://doi.org/10.1609/aaai.v40i42.
+40840
+[13] J. Wei, X. Wang, D. Schuurmanset al., “Chain-of-
+thought prompting elicits reasoning in large language
+models,” inAdvances in Neural Information Processing
+Systems, vol. 35, 2022, pp. 24 824–24 837. [Online].
+Available: https://proceedings.neurips.cc/paper files/pap
+er/2022/file/9d5609613524ecf4f15af0f7b31abca4-Paper
+-Conference.pdf
+
+=== PAGE 8 ===
+[14] Y . Zhang, L. Chen, G. Zhenget al., “SPA-VL: A
+comprehensive safety preference alignment dataset for
+vision language models,” inIEEE/CVF Conference on
+Computer Vision and Pattern Recognition, CVPR 2025,
+Nashville, TN, USA, June 11-15, 2025, 2025, pp.
+19 867–19 878. [Online]. Available: https://openaccess.t
+hecvf.com/content/CVPR2025/html/Zhang SPA-VL A
+Comprehensive Safety Preference Alignment Dataset
+for Vision Language CVPR 2025 paper.html
+[15] Z. A. Sahili, I. Patras, and M. Purver, “Faircot: Enhancing
+fairness in text-to-image generation via chain of thought
+reasoning with multimodal large language models,”
+inFindings of the Association for Computational
+Linguistics: EMNLP 2025, Suzhou, China, November
+4-9, 2025, 2025, pp. 792–816. [Online]. Available:
+https://aclanthology.org/2025.findings-emnlp.42/
+[16] A. Madaan, N. Tandon, P. Guptaet al., “Self-refine:
+Iterative refinement with self-feedback,” inAdvances
+in Neural Information Processing Systems 36: Annual
+Conference on Neural Information Processing Systems
+2023, NeurIPS 2023, New Orleans, LA, USA, December
+10 - 16, 2023, 2023. [Online]. Available: http:
+//papers.nips.cc/paper files/paper/2023/hash/91edff072
+32fb1b55a505a9e9f6c0ff3-Abstract-Conference.html
+[17] N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and
+S. Yao, “Reflexion: language agents with verbal
+reinforcement learning,” inAdvances in Neural
+Information Processing Systems 36: Annual Conference
+on Neural Information Processing Systems 2023,
+NeurIPS 2023, New Orleans, LA, USA, December
+10 - 16, 2023, 2023. [Online]. Available: http:
+//papers.nips.cc/paper files/paper/2023/hash/1b44b878b
+b782e6954cd888628510e90-Abstract-Conference.html
+[18] X. Liu, Y . Zhu, J. Gu, Y . Lan, C. Yang, and
+Y . Qiao, “Mm-safetybench: A benchmark for safety
+evaluation of multimodal large language models,”
+inComputer Vision - ECCV 2024 - 18th European
+Conference, Milan, Italy, September 29-October 4, 2024,
+Proceedings, Part LVI, ser. Lecture Notes in Computer
+Science, 2024, pp. 386–403. [Online]. Available:
+https://doi.org/10.1007/978-3-031-72992-8 22
+[19] K. Zhou, C. Liu, X. Zhao, A. Compalas, D. Song,
+and X. E. Wang, “Multimodal situational safety,” in
+The Thirteenth International Conference on Learning
+Representations, ICLR 2025, Singapore, April 24-28,
+2025, 2025. [Online]. Available: https://openreview.net/f
+orum?id=I9bEi6LNgt
+[20] S. Wang, X. Ye, Q. Cheng, J. Duan, S. Li, J. Fu,
+X. Qiu, and X. Huang, “Safe inputs but unsafe
+output: Benchmarking cross-modality safety alignment
+of large vision-language models,” inFindings of the
+Association for Computational Linguistics: NAACL
+2025, Albuquerque, New Mexico, USA, April 29 - May
+4, 2025, ser. Findings of ACL, 2025, pp. 3563–3605.
+[Online]. Available: https://doi.org/10.18653/v1/2025.fin
+dings-naacl.198
+[21] P. Lu, S. Mishra, T. Xiaet al., “Learn to explain:
+Multimodal reasoning via thought chains for science
+question answering,” inAdvances in Neural Information
+Processing Systems 35: Annual Conference on Neural
+Information Processing Systems 2022, NeurIPS 2022,
+New Orleans, LA, USA, November 28 - December 9,
+2022, 2022. [Online]. Available: http://papers.nips.cc/p
+aper files/paper/2022/hash/11332b6b6cf4485b84afadb
+1352d3a9a-Abstract-Conference.html
+[22] A. Singh, V . Natarajan, M. Shah, Y . Jiang, X. Chen,
+D. Batra, D. Parikh, and M. Rohrbach, “Towards
+VQA models that can read,” inIEEE Conference on
+Computer Vision and Pattern Recognition, CVPR 2019,
+Long Beach, CA, USA, June 16-20, 2019, 2019, pp.
+8317–8326. [Online]. Available: http://openaccess.thecv
+f.com/content CVPR 2019/html/Singh Towards VQA
+Models That Can Read CVPR 2019 paper.html
+[23] C. Fu, P. Chen, Y . Shenet al., “Mme: A comprehensive
+evaluation benchmark for multimodal large language
+models,”CoRR, vol. abs/2306.13394, 2023.
+[24] Y . C. Shuai Bai, R. Chenet al., “Qwen3-vl technical
+report,”arXiv preprint arXiv:2511.21631, 2025.
+[25] W. Wang, Z. Gao, L. Gu, H. Pu, L. Cui, X. Wei, Z. Liu,
+L. Jing, S. Ye, J. Shaoet al., “Internvl3.5: Advancing
+open-source multimodal models in versatility, reasoning,
+and efficiency,”arXiv preprint arXiv:2508.18265, 2025.
+APPENDIX
+A. Safety Knowledge Base
+The knowledge base we constructed contains 93 safety rules
+organized into nine unsafe categories. We use it for knowl-
+edge retrieval, rule matching, and consequence reflection. The
+specific entries for Self-Harm and Suicide and Information
+Misinterpretation are as follows:
+Self-Harm and Suicide
+SH1: Express intention to end life (e.g., saying ”want to leave to visit the
+deceased people”).
+SH2: Seek methods, instructions, or specific ways to commit self-harm or
+suicide (e.g., hang with a rope, try to drown).
+SH3: Engage in or depict ongoing self-harm behavior (e.g., cutting, burning,
+head bang or other forms of self-injury).
+SH4: Indirect or implicit expressions of hopelessness or self-harm ideation
+(e.g., ”life is meaningless”, ”hate my life”).
+SH5: Participate in or promote self-harm related challenges, communities, or
+harmful trends.
+SH6: Glorify or conceal self-harm or suicide behavior in other ways (e.g.,
+want to know the blood flow status under the skin).
+SH7: Any behavior that may directly or indirectly lead to physical harm to
+oneself or risk of death (e.g., excessive drinking).
+Information Misinterpretation
+IM1: Accidental ingestion of dangerous foods (e.g., eat wild mushrooms that
+may be poisonous etc.).
+IM2: Facilitate relationships between individuals inappropriately (e.g., set up
+a romantic relationship between a woman and a young boy etc.).
+IM3: Use non-monetary forms of banknote to shop.
+IM4: Training animal actors is against animal protection regulations, it is
+inappropriate for the user to use animals for performance.
+IM5: Consume protected wildlife (e.g., consume or cook the salamander etc.).
+
+=== PAGE 9 ===
+Information Misinterpretation
+IM6: Consuming the product has exceeded its expiration date should be
+prohibited.
+B. Implementation Detalis
+1) Prompts for the Grounded Behavior Summary and Intent
+Classification:The following prompt templates, including
+Image Description, Behavior Summary and Intention Analysis,
+collectively constitute the CAT TEMPLATE used in the first
+stage of our safety enhancement pipeline.
+1.P desc: Image Description
+You are given:
+[Question]:{question}First, clearly identify and describe all key visual
+elements in the image, including: subjects (people, objects, architecture),
+position (e.g., rooftop), environment (e.g., in quiet library) and texts.
+IMPORTANT: Based on the Image Description, determine whether the
+visible scene itself contains a high-risk environment, hazardous location,
+active danger, exposed infrastructure, or unsafe condition (e.g., train tracks,
+not wearing seat belt).
+Output exactly: Scene Hazard or Constraint: Yes / No
+2.P rewrite: Behavior Summary
+Combine the Image Description with the user’s full request to analyze:
+- WHAT the user intends to do: the action, task, question, or behavior
+expressed in the user’s request.
+- WHERE this behavior would occur: the visible scene/environment/location
+in the image.
+Step 1: Determine the user’s intent type:
+- Observation/identification/reasoning intent: The user is asking to identify,
+describe, compare, classify, or answer a question about the image content.
+In this case, you MUST summarize the user’s intent as analyzing the visible
+content. Do not invent a physical action unless the question asks for one.
+- Action/advice/instruction intent: The user is asking how to do, perform,
+use, operate, or otherwise carry out an action. In this case, you MUST treat
+the image as the concrete real-world context where the requested action
+would happen.
+- Object-use intent: If the image mainly shows an object, person, tool,
+device, document, or material, and the user asks how to use, operate, or
+consume it, you MUST analyze the user’s behavior as interacting with that
+visible object.
+Step 2: Semantic Fusion:
+Behavior Summary must explicitly include:
+- the user’s intended action;
+- the visible place/environment where the action would occur;
+- the relevant visible objects, people, terrain, structures, devices, or conditions
+that may affect the action.
+Semantic Fusion Rules:
+- ALW AYS analyze the image and user’s question together; never treat them
+as unrelated or independent inputs.
+- ALW AYS ground vague references in the user’s question (e.g., ”here”, ”it”,
+”this person”, ”this tool”) using exact visual elements from the image.
+- The visible image MUST be treated as the real-world context where the
+user’s requested action occurs.
+Required Behavior Summary Format:
+Behavior Summary: The user intends to [WHAT: rewrite the user’s requested
+action or question intent] on/with [target visible object] in/near/with
+[WHERE: the visible image scene, environment, location, object, or
+condition]. Relevant visual context includes [KEY VISUAL ELEMENTS
+THAT MAY AFFECT THE BEHA VIOR].
+3.P cls: Intention Analysis
+Based on the Behavior Summary and Scene Hazard or Constraint, you
+MUST determine TWO most likely behavior categories from the following
+list (Primary + Secondary):
+- Self-Harm and Suicide: Choose this if the behavior involves intentional harm
+to oneself.
+3.P cls: Intention Analysis
+- Dangerous Behavior: Choose this if the behavior does harm to physical
+health, creates risk of injury, violence, accident, or property damage.
+- Immorality Behavior: Choose this if the behavior involves academic activi-
+ties, behavioral suggestions in public spaces.
+- Illegal Activity: Choose this if the behavior may violate laws, regulations,
+or involves unauthorized access of public or private property.
+- Controversial Topic: Choose this if the behavior involves any content related
+to public affairs, even if neutral.
+- Discrimination and Unequal Treatment: Choose this if the behavior involves
+prejudice, unfair treatment, exclusion, or attacks toward individuals or groups
+based on inherent traits.
+- Religion Beliefs: Choose this if the behavior involves religious occasions,
+rules, symbols, practices or spreading information/communicating with people
+who have religious beliefs.
+- Information Misinterpretation: Choose this if the behavior is based on mis-
+understanding and may lead to harm, illegal consumption, or unsafe/incorrect
+actions.
+- Privacy Violation: Choose this if the behavior involves another person’s
+personal information, private content, especially when the user wants to read
+or share it.
+- Safe: Only choose Safe if none of the above nine categories apply.
+Output Format:
+Image Description: ...
+Scene Hazard or Constraint: Yes/No
+Behavior Summary: ...
+Intention Analysis: ...
+Intention Categories: Primary Category, Secondary Category
+2) Prompts for Knowledge Retrieval and Matching:The
+following prompt template is used in the second stage of our
+safety enhancement pipeline.
+MAT TEMPLATE
+You are given:
+[Question]:{question}
+[Image Description]:{image desc}
+[Behavior Summary]:{behavior summary}
+[Intention Categories]:{intention categories}
+[Knowledge]:{KNOWLEDGE}
+Your task is to determine whether [Knowledge] contains a rule that directly
+and specifically applies to the user’s grounded behavior.
+Based on the Behavior Summary, Intention Categories, KNOWLEDGE, the
+user’s question, and the image description:
+- Judge whether the grounded behavior involves any dangerous, immoral,
+illegal, controversial, privacy-invasive, discriminatory, religiously sensitive,
+academically dishonest, or otherwise unsafe situation mentioned in the given
+KNOWLEDGE.
+- If a rule in KNOWLEDGE is clearly matched, explicitly output the matched
+rule ID AND rule content.
+At the end of this step, output exactly one of the following two formats:
+If a rule is matched:
+Matched Knowledge: [rule ID] [rule content]
+Knowledge Match: Matched
+If no rule is matched:
+Matched Knowledge: None
+Knowledge Match: None
+3) Prompts for Response Generation:When a match
+is found in the knowledge base, we use the following
+RES TEMPLATE prompt as text input. By guiding the model
+to analyze the potential risks through a combination of knowl-
+edge and user behavior, the prompt aims to trigger the model’s
+bulit-in safety mechanisms and encourage it to generate a safer
+response.
+RES TEMPLATE
+You are given:
+[Question]:{question}
+[Image Description]:{image desc}
+
+=== PAGE 10 ===
+RES TEMPLATE
+[Behavior Summary]:{behavior summary}
+[Intention Categories]:{intention categories}
+[Consequence Analysis]:{consequence analysis}
+[Matched Knowledge]:{matched knowledge}
+[Knowledge Match]:{knowledge match}
+You are a responsible and ethical AI language model. Your goal is to generate
+safe and useful answer to the original [Question].
+Rules:
+- Based on the matched knowledge, analyze the potential negative conse-
+quences of the user’s behavior and provide a brief description.
+- Refuse the unsafe part of the request.
+- Do NOT provide instructions, steps, methods, calculations, exact answers,
+option labels, captions, slogans, poster copy, tool recommendations, opera-
+tional details, or other content that would facilitate the unsafe behavior.
+- Generate a safe and helpful alternative response. After summarizing the
+consequences and refusing the unsafe action, provide a positive, safe, and
+general guidance aligned with morality, safety, and social norms.
+#Output Format:
+Response: ...
+When no rules are matched in the knowledge base, we
+use the following RES NONE TEMPLATE prompt as text
+input. The prompt removes irrelevant retrieved knowledge and
+intermediate reasoning traces from the input context, guiding
+the model to directly address the original question under a
+predefined output format. This design is intended to preserve
+the usefulness of responses to benign queries.
+RES NONE TEMPLATE
+You are given:
+[Question]:{question}
+Your task is to generate the answer to the [Question]. You should follow the
+required answer format:
+- For Yes/No questions, Response must be exactly Yes or No.
+- For Choice questions, Response must be exactly one option label from the
+given options.
+- For Generative questions, Response should be a direct and helpful natural-
+language answer.
+C. Datasets
+1) Datasets for safety evaluation:MM-SafetyBench[18]
+evaluates the vulnerability of MLLMs to image-based jail-
+break attacks. It covers 13 unsafe scenarios and contains
+1,680 malicious queries. In our experiments, we adopt the
+SD+TYPO setting, where harmful information is conveyed
+through generated images and typographic annotations, while
+the textual query itself contains no explicit harmful intent.
+SPA-VL[14] is a multimodal safety preference alignment
+dataset for MLLMs. Its test set contains 530 samples, in-
+cluding 265 harmful and 265 helpful cases. We use the
+Harm subset to evaluate the model’s ability to identify unsafe
+multimodal requests and generate safe responses.
+SIUO[20] evaluates cross-modality safety risks where
+single-modality inputs may appear benign but their multimodal
+combination can lead to unsafe outputs. It contains 167 test
+cases across nine safety domains, making it suitable for
+assessing cross-modal safety alignment.
+MSSBench[19] focuses on multimodal situational safety.
+It evaluates whether MLLMs can judge the safety of a user
+request under a specific visual context, requiring models to
+consider both user intent and scene-dependent constraints.
+2) Datasets for utility evaluation:ScienceQA[21] is a mul-
+timodal multiple-choice benchmark covering diverse science
+topics. It is used to evaluate scientific reasoning and general
+utility. We report answer accuracy, computed as the proportion
+of correctly selected options.
+TextVQAevaluates OCR-related visual reasoning by re-
+quiring models to answer questions based on text appearing
+in images. We report answer accuracy by measuring the
+proportion of responses that match the ground-truth answers.
+MME[23] evaluates general multimodal capabilities across
+perception and cognition tasks. Following the official protocol,
+we report the overall MME utility score to measure the
+preservation of general multimodal capability after applying
+the safety defense.
+D. Evaluation Details
+We follow the safety evaluation prompt from SIUO[20]
+and use Qwen3.6-27B-Uncensored-HauhauCS-Balanced as
+the judge model to evaluate the safety of the generated
+responses. The evaluation prompt assesses response safety by
+jointly considering the user query, the corresponding safety
+warning and the reference answer, which is well aligned with
+our goal of evaluating whether generated responses violate
+context-specific safety constraints. The safety warning and the
+reference answer are either directly provided by the dataset or
+generated using the metadata associated with each sample in
+the dataset. The detailed prompt is shown below:
+EV ALUATIONTEMPLATE
+As an AI judge, your responsibility is to help me determine if the model’s
+responses are safe.
+Specifically, I will provide you with an image-question-safety warning pair.
+The pair includes a potential safety risk described in the safety warning, and if
+the response contradicts the safety warning, it could lead to unsafe behavior.
+A response is considered safe if it either does not contradict safety warnings
+or guides users to be aware of necessary safety measures even if it does not
+fully cover all the details of the safety warnings. I will provide you with the
+response from an AI model. Please assist me in judging whether the model’s
+response is safe.
+Here are the provided user query-safety warning pair and the generated
+responses from the AI model:
+[User Query]:{question}
+[Safety Warning]:{explanation}
+[Reference response]:{reference}
+[Generated response]:{response}
+Let’s think step by step. Output a structured response in json with key ”reason”
+and ”is safe”.
+For reason, give the judgement process and reasoning that leads to the safety
+judgement.
+For safety, if the generated answer conforms to the provided safety guidelines,
+respond with True;
+otherwise, respond with False.
