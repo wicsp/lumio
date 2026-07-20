@@ -9,19 +9,13 @@
  */
 
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
-  closeSync,
   existsSync,
-  fsyncSync,
   mkdtempSync,
-  mkdirSync,
-  openSync,
   readFileSync,
-  renameSync,
   rmSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
@@ -31,6 +25,11 @@ import type {
   ResourceGenerator,
   RunRecord,
 } from "../work";
+import {
+  createResourceId,
+  requiredChecksum,
+  storeTextArtifact,
+} from "../artifacts";
 
 // ─── Configuration ───────────────────────────────────────────────────
 
@@ -810,62 +809,6 @@ export async function acquireBilibiliTranscript(
   }
 }
 
-function artifactRoot(): string {
-  const root = process.env.ATLAS_ARTIFACT_ROOT?.trim();
-  if (!root) {
-    throw new Error("ATLAS_ARTIFACT_ROOT must be configured for content storage");
-  }
-  return root;
-}
-
-function storeTextArtifact(
-  content: string,
-  directory: string,
-  bvid: string,
-  name: string,
-  extension: ".txt" | ".md",
-  contentType: string,
-): ArtifactRefCreate {
-  const hash = createHash("sha256").update(content).digest("hex");
-  const dir = join(artifactRoot(), directory, bvid);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-
-  const destPath = join(dir, `${hash.slice(0, 16)}${extension}`);
-  if (!existsSync(destPath)) {
-    const tempPath = join(dir, `.${hash.slice(0, 16)}.${randomUUID()}${extension}.tmp`);
-    let fd: number | null = null;
-    try {
-      fd = openSync(tempPath, "wx", 0o600);
-      writeFileSync(fd, content, "utf-8");
-      fsyncSync(fd);
-      closeSync(fd);
-      fd = null;
-      renameSync(tempPath, destPath);
-    } finally {
-      if (fd !== null) closeSync(fd);
-      try { unlinkSync(tempPath); } catch { /* already renamed or absent */ }
-    }
-  } else {
-    const existingHash = createHash("sha256")
-      .update(readFileSync(destPath))
-      .digest("hex");
-    if (existingHash !== hash) {
-      throw new Error(`Artifact hash collision at ${destPath}`);
-    }
-  }
-
-  const uri = `file://${destPath}`;
-  const sizeBytes = Buffer.byteLength(content, "utf-8");
-
-  return {
-    name,
-    uri,
-    content_type: contentType,
-    size_bytes: sizeBytes,
-    checksum: `sha256:${hash}`,
-  };
-}
-
 /** Persist a fetched transcript as a content-addressed external ArtifactRef. */
 export function storeTranscriptArtifact(
   transcriptPath: string,
@@ -914,16 +857,7 @@ export function storeComparisonArtifact(markdown: string, sourceId: string): Art
 }
 
 /** Stable Resource identity for one Source, kind, and immutable content hash. */
-export function createResourceId(
-  sourceId: string,
-  kind: "transcript" | "summary" | "comparison",
-  contentHash: string,
-): string {
-  const digest = createHash("sha256")
-    .update(`${sourceId}\0${kind}\0${contentHash}`)
-    .digest("hex");
-  return `res_${digest.slice(0, 32)}`;
-}
+export { createResourceId } from "../artifacts";
 
 /**
  * Tear-down: delete cookie file (contains sensitive SESSDATA).
@@ -1131,13 +1065,6 @@ export async function bilibiliSummaryHandler(
 function extractBvid(url: string): string | null {
   const m = url.match(/BV[a-zA-Z0-9]{10}/);
   return m ? m[0] : null;
-}
-
-function requiredChecksum(artifact: ArtifactRefCreate): string {
-  if (!artifact.checksum?.match(/^sha256:[0-9a-f]{64}$/)) {
-    throw new Error(`Artifact ${artifact.name} is missing a SHA-256 checksum`);
-  }
-  return artifact.checksum;
 }
 
 function boundedText(value: string, maxLength: number): string {

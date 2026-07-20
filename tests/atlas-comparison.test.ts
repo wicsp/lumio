@@ -5,11 +5,17 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { AtlasClient } from "../extensions/atlas/client";
-import { createComparisonHandler } from "../extensions/atlas/comparison";
+import {
+  createComparisonHandler,
+  parseComparisonDocument,
+  relevantComments,
+  renderComparisonMarkdown,
+} from "../extensions/atlas/comparison";
 import { storeSummaryArtifact } from "../extensions/atlas/jobs/bilibili";
 import type { AtlasResourceRecord, AtlasSourceRecord } from "../extensions/atlas/obsidian";
 import type { PiSummaryRuntime } from "../extensions/atlas/summarize";
 import type { ArtifactRef, RunRecord } from "../extensions/atlas/work";
+import type { AtlasCommentRecord } from "../extensions/atlas/resource-review";
 
 function run(resourceId: unknown): RunRecord {
   return {
@@ -42,6 +48,71 @@ test("comparison rejects invalid input before accessing runtime", async () => {
     message: "Invalid resource_id",
     retryable: false,
   });
+});
+
+test("comparison selects only comments for the Resource or its Source", () => {
+  const exact: AtlasCommentRecord = {
+    comment_id: "cmt_exact",
+    knowledge_ref_id: "kref_exact",
+    note_id: "Knowledge/Comments/res_exact",
+    source_ids: ["src_same"],
+    resource_ids: ["res_exact"],
+    body_markdown: "## 我的评论\n\nexact",
+    content_hash: `sha256:${"a".repeat(64)}`,
+    format: "text/markdown",
+    created_at: "2026-07-20T00:00:00Z",
+    updated_at: "2026-07-20T00:00:00Z",
+  };
+  const sameSource: AtlasCommentRecord = {
+    ...exact,
+    comment_id: "cmt_source",
+    knowledge_ref_id: "kref_source",
+    note_id: "Knowledge/Comments/res_old",
+    source_ids: ["src_same"],
+    resource_ids: ["res_old"],
+  };
+  const unrelated: AtlasCommentRecord = {
+    ...exact,
+    comment_id: "cmt_unrelated",
+    knowledge_ref_id: "kref_unrelated",
+    note_id: "Knowledge/Comments/res_other",
+    source_ids: ["src_other"],
+    resource_ids: ["res_other"],
+  };
+  assert.deepEqual(
+    relevantComments([unrelated, sameSource, exact], "res_exact", "src_same"),
+    [exact, sameSource],
+  );
+});
+
+test("comparison renders readable Obsidian cards without internal KnowledgeRef IDs", () => {
+  const document = parseComparisonDocument(`\`\`\`json
+{"overview":"双方对核心功能基本一致，但评价仍有差异。","items":[{"relation":"supports","topic":"工作区模型","source_view":"来源认为工作区位于标签与分屏之上。","my_view":"我认为它用工作区替代了 session。","assessment":"两者描述的是同一个组织层级变化。","comment_index":1},{"relation":"contradicts","topic":"整体易用性","source_view":"来源认为它优于 Tmux。","my_view":"我认为它可能不如 Cmux。","assessment":"评价不同，但比较对象也不同。","comment_index":1}],"open_questions":["需要在同一任务上实测。"]}
+\`\`\``);
+  const markdown = renderComparisonMarkdown(document, "res_summary", [{
+    label: "我的评论 1",
+    comment: {
+      comment_id: "cmt_secret",
+      knowledge_ref_id: "kref_secret",
+      note_id: "Knowledge/Comments/res_summary",
+      source_ids: ["src_same"],
+      resource_ids: ["res_summary"],
+      body_markdown: "## 我的评论\n\n我的观点",
+      content_hash: `sha256:${"a".repeat(64)}`,
+      format: "text/markdown",
+      created_at: "2026-07-20T00:00:00Z",
+      updated_at: "2026-07-20T00:00:00Z",
+    },
+  }]);
+
+  assert.match(markdown, /\[!summary\] 一眼结论/);
+  assert.match(markdown, /共识 1/);
+  assert.match(markdown, /分歧 1/);
+  assert.match(markdown, /\[!success\].*工作区模型/);
+  assert.match(markdown, /\*\*来源观点\*\*/);
+  assert.match(markdown, /\*\*我的观点\*\*/);
+  assert.match(markdown, /\[\[Knowledge\/Comments\/res_summary\|我的评论 1\]\]/);
+  assert.doesNotMatch(markdown, /kref_/);
 });
 
 test("comparison refuses to invent friction when there are no written comments", async () => {
@@ -96,7 +167,9 @@ test("comparison refuses to invent friction when there are no written comments",
       if (path.endsWith("/bundle")) {
         return { ok: true as const, data: { resource, source, artifact: artifactRef } as T };
       }
-      if (path === "/api/knowledge-refs?limit=500") return { ok: true as const, data: [] as T };
+      if (path === `/api/comments?source_id=${encodeURIComponent(resource.source_id)}&limit=500`) {
+        return { ok: true as const, data: [] as T };
+      }
       return { ok: false as const, status: 404, error: path };
     },
   };

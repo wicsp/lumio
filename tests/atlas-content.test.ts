@@ -121,6 +121,24 @@ test("Resource Card projection rejects artifact hash mismatch", async () => {
   );
 });
 
+test("comparison Resource Card keeps technical IDs collapsed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lumio-comparison-card-"));
+  const artifactRoot = join(root, "artifacts");
+  const vault = join(root, "Vortex");
+  process.env.ATLAS_ARTIFACT_ROOT = artifactRoot;
+  const artifact = storeSummaryArtifact("> [!summary] 一眼结论\n> 清晰对比。\n", "comparison");
+  const comparison = resource({ kind: "comparison", title: "观点对比", content_hash: artifact.checksum! });
+  const projected = await projectResourceCard(vault, {
+    ...comparison,
+    artifact_uri: artifact.uri,
+    source_uri: "https://example.test/source",
+  });
+  const card = readFileSync(join(vault, projected.relative_path), "utf-8");
+  assert.match(card, /AI 观点对比/);
+  assert.match(card, /\[!example\]- 技术信息/);
+  assert.match(card, /viewpoint-comparison/);
+});
+
 test("blank Knowledge Comment is explicit and never overwritten", async () => {
   const root = mkdtempSync(join(tmpdir(), "lumio-rfc3-comment-"));
   const vault = join(root, "Vortex");

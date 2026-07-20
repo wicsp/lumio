@@ -10,6 +10,7 @@ import type {
   AtlasResourceRecord,
   AtlasSourceRecord,
 } from "../extensions/atlas/obsidian";
+import { createKnowledgeCommentDraft } from "../extensions/atlas/obsidian";
 import {
   completeResourceComment,
   vortexCommentHandler,
@@ -150,8 +151,14 @@ test("vortex-comment-v1 creates only a pending local draft and preserves human p
   assert.doesNotMatch(reported, /这是我本人|Machine summary|absolute_path/);
 });
 
-test("explicit completion registers metadata and projects reviewed state", async () => {
-  const { resource, source, artifactRef } = fixture();
+test("explicit completion uploads local Markdown and projects reviewed state", async () => {
+  const { vault, resource, source, artifactRef } = fixture();
+  const draft = await createKnowledgeCommentDraft(vault, resource);
+  const markdown = readFileSync(draft.absolute_path, "utf-8").replace(
+    "<!-- 从这里开始只写你自己负责的内容。 -->",
+    "这是我本人写下并负责的评论。",
+  );
+  writeFileSync(draft.absolute_path, markdown, "utf-8");
   const posts: unknown[] = [];
   const client: Pick<AtlasClient, "controlGet" | "controlPost" | "controlPatch"> = {
     async controlGet<T>() {
@@ -171,6 +178,18 @@ test("explicit completion registers metadata and projects reviewed state", async
             source_ids: [source.source_id],
             resource_ids: [resource.resource_id],
           },
+          comment: {
+            comment_id: "cmt_comment",
+            knowledge_ref_id: "kref_comment",
+            note_id: `Knowledge/Comments/${resource.resource_id}`,
+            source_ids: [source.source_id],
+            resource_ids: [resource.resource_id],
+            body_markdown: markdown,
+            content_hash: (body as { content_hash: string }).content_hash,
+            format: "text/markdown",
+            created_at: resource.created_at,
+            updated_at: resource.updated_at,
+          },
         } as T,
       };
     },
@@ -181,7 +200,13 @@ test("explicit completion registers metadata and projects reviewed state", async
 
   const result = await completeResourceComment(client, resource.resource_id);
   assert.equal(result.resource.review_status, "reviewed");
-  assert.deepEqual(posts, [{ resource_id: resource.resource_id }]);
+  assert.equal(result.comment.comment_id, "cmt_comment");
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0], {
+    resource_id: resource.resource_id,
+    body_markdown: markdown,
+    content_hash: result.comment.content_hash,
+  });
 });
 
 test("vortex-comment-v1 rejects invalid input without touching Atlas", async () => {

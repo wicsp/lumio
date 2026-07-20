@@ -85,3 +85,29 @@ test("Lumio accepts v3 registration and stores only the scoped work credential",
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Atlas validation errors preserve the response body and are not retried", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json(
+      { detail: [{ loc: ["body", "kind"], msg: "Input should be 'webpage'", type: "literal_error" }] },
+      { status: 422 },
+    );
+  };
+
+  try {
+    const client = createClient(config, "test-session");
+    const result = await client.controlPost("/api/sources", { kind: "web_page" });
+    assert.equal(result.ok, false);
+    assert.equal(calls, 1);
+    if (!result.ok) {
+      assert.equal(result.status, 422);
+      assert.match(result.error, /Input should be 'webpage'/);
+      assert.doesNotMatch(result.error, /unreachable/i);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

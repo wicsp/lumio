@@ -3,6 +3,7 @@ import {
   configuredVaultPath,
   createKnowledgeCommentDraft,
   projectResourceCard,
+  readCompletedKnowledgeComment,
   type AtlasResourceRecord,
   type AtlasSourceRecord,
   type KnowledgeCommentDraft,
@@ -45,6 +46,20 @@ interface CommentCompleteResponse {
     source_ids: string[];
     resource_ids: string[];
   };
+  comment: AtlasCommentRecord;
+}
+
+export interface AtlasCommentRecord {
+  comment_id: string;
+  knowledge_ref_id: string;
+  note_id: string;
+  source_ids: string[];
+  resource_ids: string[];
+  body_markdown: string;
+  content_hash: string;
+  format: "text/markdown";
+  created_at: string;
+  updated_at: string;
 }
 
 function checkAbort(signal?: AbortSignal): void {
@@ -163,18 +178,35 @@ export async function createResourceComment(
   };
 }
 
-/** Register only metadata and mark the Resource reviewed after human completion. */
+/** Upload the completed local Markdown; Atlas atomically stores it and marks reviewed. */
 export async function completeResourceComment(
   client: ReviewClient,
   resourceId: string,
   vaultPath = configuredVaultPath(),
-): Promise<{ resource: AtlasResourceRecord; projection: ResourceCardProjection | null }> {
+): Promise<{ resource: AtlasResourceRecord; comment: AtlasCommentRecord; projection: ResourceCardProjection | null }> {
   if (!/^res_[A-Za-z0-9._-]{8,120}$/.test(resourceId)) {
     throw new ResourceCommentError("invalid_input", "Invalid Resource ID", false);
   }
+  if (!vaultPath) {
+    throw new ResourceCommentError("vault_unconfigured", "ATLAS_OBSIDIAN_VAULT is not configured", false);
+  }
+  let localComment;
+  try {
+    localComment = await readCompletedKnowledgeComment(vaultPath, resourceId);
+  } catch (error) {
+    throw new ResourceCommentError(
+      "comment_not_ready",
+      error instanceof Error ? error.message : "Unable to read completed Knowledge Comment",
+      false,
+    );
+  }
   const completed = await client.controlPost<CommentCompleteResponse>(
     "/api/review-actions/complete-comment",
-    { resource_id: resourceId },
+    {
+      resource_id: resourceId,
+      body_markdown: localComment.body_markdown,
+      content_hash: localComment.content_hash,
+    },
   );
   if (!completed.ok) throw atlasError("Comment completion", completed, "resource_not_found");
   const bundle = await fetchResourceBundle(client, resourceId);
@@ -182,7 +214,44 @@ export async function completeResourceComment(
     { ...bundle, resource: completed.data.resource },
     vaultPath,
   );
-  return { resource: completed.data.resource, projection };
+  return { resource: completed.data.resource, comment: completed.data.comment, projection };
+}
+
+export async function vortexCommentSyncHandler(
+  run: RunRecord,
+  _signal: AbortSignal,
+  client: ReviewClient,
+): Promise<HandlerResult> {
+  const resourceId = typeof run.input.resource_id === "string" ? run.input.resource_id.trim() : "";
+  if (!resourceId) {
+    return { status: "failure", code: "invalid_input", message: "Missing required field: resource_id", retryable: false };
+  }
+  try {
+    const result = await completeResourceComment(client, resourceId);
+    return {
+      status: "success",
+      output: {
+        resource_id: result.resource.resource_id,
+        review_status: result.resource.review_status,
+        comment_id: result.comment.comment_id,
+        content_hash: result.comment.content_hash,
+        card_projection: result.projection?.action ?? null,
+      },
+      artifacts: [],
+      source_updates: [],
+      resources: [],
+    };
+  } catch (error) {
+    if (error instanceof ResourceCommentError) {
+      return { status: "failure", code: error.code, message: error.message, retryable: error.retryable };
+    }
+    return {
+      status: "failure",
+      code: "comment_sync_failed",
+      message: error instanceof Error ? error.message.slice(0, 240) : "Comment sync failed",
+      retryable: true,
+    };
+  }
 }
 
 export async function vortexCommentHandler(

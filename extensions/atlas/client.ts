@@ -254,13 +254,15 @@ async function atlasRequest<T>(
         return { ok: true, data };
       }
 
-      // 401/403: don't retry
-      if (response.status === 401 || response.status === 403) {
+      // Deterministic client errors will not improve on retry. Preserve the
+      // bounded Atlas response so schema failures remain actionable.
+      if (response.status >= 400 && response.status < 500
+        && response.status !== 408 && response.status !== 429) {
         const text = await response.text().catch(() => "");
         return {
           ok: false,
           status: response.status,
-          error: `Atlas rejected authentication (${response.status}): ${text.slice(0, 200)}`,
+          error: `Atlas rejected request (${response.status}): ${text.slice(0, 500)}`,
         };
       }
 

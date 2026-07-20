@@ -82,7 +82,7 @@ export async function ensureVaultStructure(vaultPath: string): Promise<void> {
 - \`Resources/**\` contains machine-generated or mechanically derived material and can be rebuilt.
 - AI may create an empty Knowledge Comment template only after an explicit user command.
 - AI must never generate, complete, rewrite, or silently promote prose in \`Knowledge/**\`.
-- Atlas stores Source, Resource, Run, and KnowledgeRef metadata; artifact bytes stay outside SQLite.
+- Atlas stores completed human Comments plus Source, Resource, Run, and KnowledgeRef metadata; machine artifact bytes stay outside SQLite.
 - Zotero remains authoritative for bibliography and PDFs.
 `);
 
@@ -143,6 +143,21 @@ export async function projectResourceCard(
   const generator = resource.generator.mode === "ai"
     ? `${resource.generator.name}@${resource.generator.version} (${resource.generator.model_provider}/${resource.generator.model_id}, ${resource.generator.prompt_version})`
     : `${resource.generator.name}@${resource.generator.version}`;
+  const machineNotice = resource.kind === "comparison"
+    ? `> [!info] AI 观点对比
+> 这是对“来源摘要”和“我的评论”的候选对照。它不会修改你的评论，也不代表你已经确认这些关系。`
+    : `> [!warning] Machine-generated Resource
+> 这是可重建的前期调研材料，不是你的知识、观点或结论。请查看原始来源后，在独立的 Knowledge Comment 中写自己的内容。`;
+  const footer = resource.kind === "comparison"
+    ? `> [!example]- 技术信息
+> - [原始来源](${markdownUrl(resource.source_uri)})
+> - Resource ID: \`${resource.resource_id}\`
+> - Source ID: \`${resource.source_id}\`
+> - Run ID: \`${resource.produced_by_run_id}\``
+    : `- [原始来源](${markdownUrl(resource.source_uri)})
+- Resource ID: \`${resource.resource_id}\`
+- Source ID: \`${resource.source_id}\`
+- Run ID: \`${resource.produced_by_run_id}\``;
   const card = `---
 type: resource
 generated: true
@@ -159,10 +174,9 @@ created_at: ${yamlString(resource.created_at)}
 tags:
   - resource
   - ai-generated
----
+${resource.kind === "comparison" ? "  - viewpoint-comparison\n" : ""}---
 
-> [!warning] Machine-generated Resource
-> 这是可重建的前期调研材料，不是你的知识、观点或结论。请查看原始来源后，在独立的 Knowledge Comment 中写自己的内容。
+${machineNotice}
 
 # ${markdownTitle(resource.title)}
 
@@ -170,10 +184,7 @@ ${body.trim()}
 
 ---
 
-- [原始来源](${markdownUrl(resource.source_uri)})
-- Resource ID: \`${resource.resource_id}\`
-- Source ID: \`${resource.source_id}\`
-- Run ID: \`${resource.produced_by_run_id}\`
+${footer}
 `;
   const action = await atomicWriteIfChanged(destination, card);
   return { relative_path: relativePath, action };
@@ -204,6 +215,13 @@ export interface KnowledgeCommentDraft {
   note_id: string;
   uri: string;
   created: boolean;
+}
+
+export interface CompletedKnowledgeComment {
+  body_markdown: string;
+  content_hash: string;
+  note_id: string;
+  uri: string;
 }
 
 /** Create a blank, human-owned comment note. Existing notes are never overwritten. */
@@ -249,6 +267,35 @@ created: ${yamlString(new Date().toISOString())}
   });
 
   return { absolute_path: absolutePath, relative_path: relativePath, note_id: noteId, uri, created };
+}
+
+/** Read a completed local draft without changing it. Atlas becomes canonical after upload. */
+export async function readCompletedKnowledgeComment(
+  vaultPath: string,
+  resourceId: string,
+): Promise<CompletedKnowledgeComment> {
+  if (!/^res_[A-Za-z0-9._-]{8,120}$/.test(resourceId)) {
+    throw new Error("Invalid Resource ID");
+  }
+  const noteId = `Knowledge/Comments/${resourceId}`;
+  const absolutePath = join(vaultPath, "Knowledge", "Comments", `${resourceId}.md`);
+  const bodyMarkdown = await readFile(absolutePath, "utf-8");
+  if (Buffer.byteLength(bodyMarkdown, "utf-8") > 256 * 1024) {
+    throw new Error("Knowledge Comment exceeds 256 KiB");
+  }
+  const prose = extractHumanCommentProse(bodyMarkdown);
+  if (!prose) throw new Error("Knowledge Comment has no written text under 我的评论");
+  return {
+    body_markdown: bodyMarkdown,
+    content_hash: `sha256:${createHash("sha256").update(bodyMarkdown).digest("hex")}`,
+    note_id: noteId,
+    uri: obsidianUri(vaultPath, noteId),
+  };
+}
+
+export function extractHumanCommentProse(markdown: string): string {
+  return markdown.match(/## 我的评论\s*\n([\s\S]*?)(?=\n## |\s*$)/)?.[1]
+    ?.replace(/<!--[\s\S]*?-->/g, "").trim() ?? "";
 }
 
 async function writeIfMissing(path: string, content: string): Promise<void> {

@@ -1,23 +1,15 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { UserMessage } from "@earendil-works/pi-ai";
 
 import type { AtlasClient } from "./client";
 import { createResourceId, storeComparisonArtifact } from "./jobs/bilibili";
-import { configuredVaultPath } from "./obsidian";
-import { fetchResourceBundle } from "./resource-review";
+import { extractHumanCommentProse } from "./obsidian";
+import { fetchResourceBundle, type AtlasCommentRecord } from "./resource-review";
 import type { PiSummaryRuntime } from "./summarize";
 import type { HandlerResult, RunRecord } from "./work";
-
-interface KnowledgeRefRecord {
-  knowledge_ref_id: string;
-  note_id: string;
-  source_ids: string[];
-  resource_ids: string[];
-}
 
 type Relation = "supports" | "contradicts" | "updates" | "related";
 
@@ -37,7 +29,7 @@ interface ComparisonDocument {
 }
 
 interface HumanComment {
-  ref: KnowledgeRefRecord;
+  comment: AtlasCommentRecord;
   text: string;
   label: string;
 }
@@ -48,13 +40,13 @@ const MAX_RESOURCE_CHARS = 30_000;
 const RELATIONS = new Set<Relation>(["supports", "contradicts", "updates", "related"]);
 
 /** Prefer the comment on this exact Resource, then other comments for the same Source. */
-export function relevantKnowledgeRefs(
-  refs: KnowledgeRefRecord[],
+export function relevantComments(
+  comments: AtlasCommentRecord[],
   resourceId: string,
   sourceId: string,
-): KnowledgeRefRecord[] {
-  return refs
-    .filter((ref) => ref.resource_ids.includes(resourceId) || ref.source_ids.includes(sourceId))
+): AtlasCommentRecord[] {
+  return comments
+    .filter((comment) => comment.resource_ids.includes(resourceId) || comment.source_ids.includes(sourceId))
     .sort((left, right) => (
       Number(right.resource_ids.includes(resourceId)) - Number(left.resource_ids.includes(resourceId))
     ))
@@ -98,7 +90,7 @@ export function parseComparisonDocument(raw: string): ComparisonDocument {
 export function renderComparisonMarkdown(
   document: ComparisonDocument,
   resourceId: string,
-  comments: Pick<HumanComment, "ref" | "label">[],
+  comments: Pick<HumanComment, "comment" | "label">[],
 ): string {
   const counts = { supports: 0, contradicts: 0, updates: 0, related: 0 };
   for (const item of document.items) counts[item.relation] += 1;
@@ -130,7 +122,7 @@ function renderComparisonCard(
   item: ComparisonItem,
   index: number,
   resourceId: string,
-  comments: Pick<HumanComment, "ref" | "label">[],
+  comments: Pick<HumanComment, "comment" | "label">[],
 ): string {
   const presentation: Record<Relation, { type: string; label: string }> = {
     supports: { type: "success", label: "共识" },
@@ -141,7 +133,7 @@ function renderComparisonCard(
   const style = presentation[item.relation];
   const comment = comments[item.comment_index - 1] ?? comments[0];
   const commentLink = comment
-    ? `[[${comment.ref.note_id}|${comment.label}]]`
+    ? `[[${comment.comment.note_id}|${comment.label}]]`
     : "我的评论";
   return `> [!${style.type}] ${String(index + 1).padStart(2, "0")} · ${style.label} · ${item.topic}
 > **来源观点** · [[Resources/Cards/${resourceId}|打开摘要]]
@@ -177,12 +169,11 @@ export function createComparisonHandler(
     }
     const client = getClient();
     const runtime = getRuntime();
-    const vaultPath = configuredVaultPath();
-    if (!client || !runtime || !vaultPath) {
+    if (!client || !runtime) {
       return {
         status: "failure",
         code: "comparison_runtime_unavailable",
-        message: "Atlas, model runtime, or Vortex vault is unavailable",
+        message: "Atlas or model runtime is unavailable",
         retryable: true,
       };
     }
@@ -192,17 +183,20 @@ export function createComparisonHandler(
       if (bundle.resource.kind !== "summary") {
         return { status: "failure", code: "unsupported_resource", message: "Comparison requires a summary Resource", retryable: false };
       }
-      const refsResponse = await client.controlGet<KnowledgeRefRecord[]>("/api/knowledge-refs?limit=500");
-      if (!refsResponse.ok) throw new Error(refsResponse.error);
+      const commentsResponse = await client.controlGet<AtlasCommentRecord[]>(
+        `/api/comments?source_id=${encodeURIComponent(bundle.resource.source_id)}&limit=500`,
+      );
+      if (!commentsResponse.ok) throw new Error(commentsResponse.error);
       const comments: HumanComment[] = [];
-      for (const ref of relevantKnowledgeRefs(refsResponse.data, resourceId, bundle.resource.source_id)) {
-        if (!/^Knowledge\/Comments\/[A-Za-z0-9._/-]{1,900}$/.test(ref.note_id) || ref.note_id.includes("..")) continue;
-        try {
-          const text = await readFile(join(vaultPath, `${ref.note_id}.md`), "utf-8");
-          const prose = text.match(/## 我的评论\s*\n([\s\S]*?)(?=\n## |$)/)?.[1]
-            ?.replace(/<!--[\s\S]*?-->/g, "").trim();
-          if (prose) comments.push({ ref, text: prose.slice(0, MAX_COMMENT_CHARS), label: `我的评论 ${comments.length + 1}` });
-        } catch { /* missing local note */ }
+      for (const comment of relevantComments(commentsResponse.data, resourceId, bundle.resource.source_id)) {
+        const prose = extractHumanCommentProse(comment.body_markdown);
+        if (prose) {
+          comments.push({
+            comment,
+            text: prose.slice(0, MAX_COMMENT_CHARS),
+            label: `我的评论 ${comments.length + 1}`,
+          });
+        }
       }
       if (comments.length === 0) {
         return { status: "failure", code: "no_human_comments", message: "No written comments for this Source are available", retryable: false };
@@ -282,10 +276,13 @@ ${text}
             prompt_version: "friction-comparison-v2",
           },
           metadata: {
-            profile_id: "friction-comparison-v2",
+            // The semantic purpose is unchanged; v2 is a prompt/rendering
+            // revision, not a parallel analysis profile.
+            profile_id: "friction-comparison-v1",
             compared_resource_id: resourceId,
-            knowledge_ref_ids: comments.map(({ ref }) => ref.knowledge_ref_id),
-            comment_note_ids: comments.map(({ ref }) => ref.note_id),
+            knowledge_ref_ids: comments.map(({ comment }) => comment.knowledge_ref_id),
+            comment_ids: comments.map(({ comment }) => comment.comment_id),
+            comment_note_ids: comments.map(({ comment }) => comment.note_id),
           },
         }],
       };

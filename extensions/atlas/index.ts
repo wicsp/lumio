@@ -32,6 +32,7 @@ import {
   type HandlerSuccess,
 } from "./work";
 import { bilibiliSummaryHandler, extractBvid } from "./jobs/bilibili";
+import { webSummaryHandler } from "./jobs/web";
 import {
   configuredVaultPath,
   ensureVaultStructure,
@@ -42,18 +43,24 @@ import {
   type AtlasResourceRecord,
   type AtlasSourceRecord,
 } from "./obsidian";
-import { createPiBilibiliSummaryGenerator } from "./summarize";
+import { createPiBilibiliSummaryGenerator, createPiWebSummaryGenerator } from "./summarize";
 import {
   completeResourceComment,
   createResourceComment,
   fetchResourceBundle,
   projectResourceBundle,
   vortexCommentHandler,
+  vortexCommentSyncHandler,
   type AtlasResourceBundle,
 } from "./resource-review";
 import { vortexResourcePurgeHandler } from "./resource-purge";
 import { generateDailyReviewDigest, generateWeeklyAudit } from "./digests";
 import { createComparisonHandler } from "./comparison";
+import {
+  startWebCaptureServer,
+  webCaptureNodeCapability,
+  type WebCaptureServer,
+} from "./web-capture";
 
 // ─── Module state ────────────────────────────────────────────────────
 
@@ -61,10 +68,18 @@ let client: AtlasClient | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let workPoller: WorkPoller | null = null;
 let summaryRuntime: { model: Model<any>; modelRegistry: ModelRegistry } | null = null;
+let webCaptureServer: WebCaptureServer | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const REGISTRATION_TIMEOUT_MS = 5_000;
 export const ATLAS_WORK_POLL_INTERVAL_MS = 2_000;
+
+function advertisedCapabilities(): string[] {
+  const capabilities = Array.from(jobHandlers.keys());
+  const config = parseConfig();
+  if (config) capabilities.push(webCaptureNodeCapability(config.nodeId));
+  return capabilities;
+}
 
 // ─── Heartbeat loop ──────────────────────────────────────────────────
 
@@ -120,10 +135,13 @@ async function projectPublishedResources(
   result: HandlerSuccess,
 ): Promise<void> {
   if (!configuredVaultPath()) return;
+  let publishedComparison = false;
   for (const resource of result.resources) {
     if (resource.kind !== "summary" && resource.kind !== "comparison") continue;
+    if (resource.kind === "comparison") publishedComparison = true;
     await projectResourceBundle(await fetchResourceBundle(c, resource.resource_id));
   }
+  if (publishedComparison) await reconcileResourceCards(c);
 }
 
 export interface ResourceCardReconciliation {
@@ -160,16 +178,19 @@ export async function reconcileResourceCards(
   const vaultPath = configuredVaultPath();
   if (!vaultPath) throw new Error("ATLAS_OBSIDIAN_VAULT is not configured");
   await ensureVaultStructure(vaultPath);
-  const [response, knowledgeResponse] = await Promise.all([
+  const [summaryResponse, comparisonResponse, knowledgeResponse] = await Promise.all([
     c.controlGet<AtlasResourceRecord[]>("/api/resources?kind=summary&limit=500"),
+    c.controlGet<AtlasResourceRecord[]>("/api/resources?kind=comparison&limit=500"),
     c.controlGet<AtlasKnowledgeRefRecord[]>("/api/knowledge-refs?limit=500"),
   ]);
-  if (!response.ok) throw new Error(response.error);
+  if (!summaryResponse.ok) throw new Error(summaryResponse.error);
+  if (!comparisonResponse.ok) throw new Error(comparisonResponse.error);
   if (!knowledgeResponse.ok) throw new Error(knowledgeResponse.error);
+  const resources = [...summaryResponse.data, ...comparisonResponse.data];
 
   const referenced = new Set(knowledgeResponse.data.flatMap((item) => item.resource_ids));
   const currentBySlot = new Map<string, AtlasResourceRecord>();
-  for (const resource of response.data) {
+  for (const resource of resources) {
     if (resource.review_status === "dismissed") continue;
     const slot = `${resource.source_id}\0${resourceProfileId(resource)}`;
     const current = currentBySlot.get(slot);
@@ -193,10 +214,10 @@ export async function reconcileResourceCards(
     errors: [],
   };
   let cursor = 0;
-  const workerCount = Math.min(4, response.data.length);
+  const workerCount = Math.min(4, resources.length);
   const workers = Array.from({ length: workerCount }, async () => {
-    while (cursor < response.data.length) {
-      const resource = response.data[cursor++];
+    while (cursor < resources.length) {
+      const resource = resources[cursor++];
       try {
         if (resource.review_status === "dismissed" || !projected.has(resource.resource_id)) {
           const removal = await removeResourceCard(vaultPath, resource.resource_id);
@@ -256,7 +277,7 @@ async function dispatchJob(
 function startWorkPolling(c: AtlasClient, ui: { setStatus: (k: string, v: string | undefined) => void }) {
   stopWorkPolling();
 
-  const capabilities = Array.from(jobHandlers.keys());
+  const capabilities = advertisedCapabilities();
 
   workPoller = startWorkPoller(
     c,
@@ -278,6 +299,12 @@ function stopWorkPolling() {
     workPoller.stop();
     workPoller = null;
   }
+}
+
+async function stopWebCaptureServer() {
+  const active = webCaptureServer;
+  webCaptureServer = null;
+  if (active) await active.close();
 }
 
 // ─── Work status for footer ─────────────────────────────────────────
@@ -342,7 +369,7 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
   const payload: AtlasAgentRegistration = {
     agent_id: c.agentId,
     name: generateAgentName(c.config),
-    capabilities: Array.from(jobHandlers.keys()),
+    capabilities: advertisedCapabilities(),
     metadata: buildMetadata(c.config, c.agentId.split(".").at(-1)),
   };
 
@@ -355,9 +382,14 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
 export default function atlasExtension(pi: ExtensionAPI) {
   // ── Register job handlers ────────────────────────────────────
   const summarize = createPiBilibiliSummaryGenerator(() => summaryRuntime);
+  const summarizeWeb = createPiWebSummaryGenerator(() => summaryRuntime);
   registerJobHandler(
     "bilibili-summary-v4",
     (run, signal) => bilibiliSummaryHandler(run, signal, summarize),
+  );
+  registerJobHandler(
+    "web-summary-v1",
+    (run, signal) => webSummaryHandler(run, signal, summarizeWeb),
   );
   registerJobHandler("vortex-comment-v1", (run, signal) => {
     const activeClient = client;
@@ -370,6 +402,18 @@ export default function atlasExtension(pi: ExtensionAPI) {
       });
     }
     return vortexCommentHandler(run, signal, activeClient);
+  });
+  registerJobHandler("vortex-comment-sync-v1", (run, signal) => {
+    const activeClient = client;
+    if (!activeClient) {
+      return Promise.resolve({
+        status: "failure" as const,
+        code: "atlas_unavailable",
+        message: "Atlas client is not available in this Lumio session",
+        retryable: true,
+      });
+    }
+    return vortexCommentSyncHandler(run, signal, activeClient);
   });
   registerJobHandler("vortex-resource-purge-v1", vortexResourcePurgeHandler);
   registerJobHandler(
@@ -501,7 +545,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("atlas:complete-comment", {
-    description: "Register a finished local Knowledge Comment and mark its Resource reviewed",
+    description: "Upload a finished local Knowledge Comment to Atlas and mark its Resource reviewed",
     handler: async (args, ctx) => {
       const resourceId = args.trim();
       if (!resourceId) {
@@ -515,7 +559,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
       try {
         const result = await completeResourceComment(client, resourceId);
         ctx.ui.notify(
-          `Atlas: ${resourceId} reviewed${result.projection ? `; Resource Card ${result.projection.action}` : ""}.`,
+          `Atlas: synced ${result.comment.comment_id}; ${resourceId} reviewed${result.projection ? `; Resource Card ${result.projection.action}` : ""}.`,
           "info",
         );
       } catch (err) {
@@ -726,6 +770,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     // Clean up any previous session's resources.
     stopHeartbeat();
+    await stopWebCaptureServer();
     client = null;
     summaryRuntime = null;
 
@@ -739,6 +784,14 @@ export default function atlasExtension(pi: ExtensionAPI) {
       ? { model: ctx.model, modelRegistry: ctx.modelRegistry }
       : null;
     client = createClient(config, ctx.sessionManager.getSessionId());
+    try {
+      webCaptureServer = await startWebCaptureServer(() => client);
+    } catch (err) {
+      ctx.ui.notify(
+        `Lumio web capture bridge failed: ${err instanceof Error ? err.message : String(err)}`,
+        "warning",
+      );
+    }
 
     const vaultPath = configuredVaultPath();
     if (vaultPath) {
@@ -803,9 +856,10 @@ export default function atlasExtension(pi: ExtensionAPI) {
     summaryRuntime = { model: event.model, modelRegistry: ctx.modelRegistry };
   });
 
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", async () => {
     stopWorkPolling();
     stopHeartbeat();
+    await stopWebCaptureServer();
     client = null;
     summaryRuntime = null;
   });

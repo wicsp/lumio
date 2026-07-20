@@ -80,24 +80,28 @@ pi -e <path-to-lumio>
 - Lumio quiet tools：覆盖内置 `bash/read/grep/find/ls/edit/write` 的 TUI renderer，让折叠工具行只显示一行调用和展开提示，不改变模型可见的工具结果。
 - Gnosis、Librarian、Oracle、review、triage、questionnaire 和 workflow audit 等本地工具与命令。
 - Atlas RFC 0003/0004：把 Bilibili 捕获处理为可追踪的 Source/Resource，并将机器生成的摘要投影到 Vortex；Console 请求的 `vortex-comment-v1` 和 `/atlas:comment` 共用同一套空白人类评论流程。
+- Lumio Web Clipper：Chrome 中只有一个 `Send to Atlas` 按钮；浏览器提取当前已渲染页面，Lumio 经本机 bridge 写入 extraction Artifact 并排队正常网页摘要。
 - Bark 与桌面/终端完成通知。
 
 ### Atlas / Vortex 工作流
 
 - `/atlas:enqueue <Bilibili URL>`：先在 Atlas 幂等创建 Source，再排队执行摘要 Run。
+- `chrome-extension/atlas-capture`：以 unpacked extension 安装后点击 `Send to Atlas`；扩展不持有 Atlas 凭据，只向 `127.0.0.1:43119` 的 Lumio bridge 发送标题、canonical URL 与 Markdown。正文不会进入 Run input 或 output，而是先写入内容寻址的 extraction Artifact，再由当前 node 的 `web-summary-v1` executor 生成 summary Resource。
 - Pi 会在 Atlas 注册成功后自动 reconciliation：读取全部 summary Resource，校验 Artifact hash，投影 `pending`/`reviewed` 卡片，并移除 `dismissed` 卡片。内容无变化时不会改写文件。
 - `/atlas:reconcile`：手动执行同一套全量 reconciliation，并报告 created、updated、removed、unchanged 和 failed 数量。
 - `/atlas:comment <resource_id>`：本地创建稳定路径的空白 `Knowledge/Comments/<resource_id>.md`，连续打开 Resource 与 Comment；此时 Resource 仍为 `pending`。
-- `/atlas:complete-comment <resource_id>`：人工写完后只向 Atlas 登记 metadata-only KnowledgeRef，将 Resource 标为 `reviewed`，再刷新卡片状态；评论正文不会上传。
-- Atlas Console 的 `写评论` 直接通过 Obsidian URI 本地创建并打开草稿，不再等待远端 Run；`完成评论` 才与 Atlas 收敛。
+- `/atlas:complete-comment <resource_id>`：人工写完后读取并校验本地 Markdown，上传到 Atlas；Atlas 原子保存 Comment 与 KnowledgeRef、将 Resource 标为 `reviewed`，再刷新卡片状态。
+- Atlas Console 的 `写评论` 直接通过 Obsidian URI 本地创建并打开草稿；`完成评论` 排队 `vortex-comment-sync-v1`，由在线 Lumio 读取本地草稿并同步到 Atlas。
 - `/atlas:dismiss <resource_id>`：将没有 KnowledgeRef 的 Resource 标为 `dismissed`，并只删除可重建的 Resource Card。
 - `/atlas:restore <resource_id>`：将 dismissed Resource 恢复为 `pending`，并重建 Resource Card。
 - `/atlas:digest` 与 `/atlas:audit`：生成可重建的每日审阅简报和每周完整性检查；成功连接 Atlas 时会自动刷新当天简报，周日同时刷新 Audit。
-- `/atlas:compare <resource_id>`：显式排队 `vortex-comparison-v1`，只生成带双侧证据的候选关系 Resource，不修改人工 Knowledge。
+- `/atlas:compare <resource_id>`：显式排队观点对比；只读取 Atlas 中同 Resource/同 Source 的已完成评论，以结构化数据生成“来源观点 / 我的观点 / 对比判断”Obsidian callout 卡片，不修改人工 Knowledge。Console 会提供“查看对比”直达入口。
 
 summary Resource 的 `metadata.profile_id` 表示分析目的。同一 Source 与 profile 只投影当前结果；不同 profile 并列存在。被 KnowledgeRef 引用的历史 Resource Card 会保留，避免破坏人工证据链接。
 
-`Resources/**` 是机器生成的投影，可以重建；`Knowledge/**` 只写本人负责的内容，reconciliation、dismiss 和 restore 都不会写入或删除它。摘要正文和 transcript 不进入 Atlas SQLite，也不进入 Run output。
+`Resources/**` 是机器生成的投影，可以重建；`Knowledge/**` 是本人写评论与查看观点的本地平面，reconciliation、dismiss 和 restore 都不会覆盖或删除它。完成后的 Comment 以 Atlas 为事实源；摘要正文、transcript 和网页 extraction 不进入 Atlas SQLite，也不进入 Run output。
+
+网页采集 bridge 默认只监听 loopback 的 `43119` 端口，只接受 Chrome extension origin、JSON 和专用 capture header。可用 `LUMIO_WEB_CAPTURE_PORT` 改端口；修改后也要同步更新扩展的 `BRIDGE_URL` 与 `host_permissions`。
 
 ## 迁移来源
 
