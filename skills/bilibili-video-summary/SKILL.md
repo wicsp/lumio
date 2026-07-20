@@ -1,11 +1,11 @@
 ---
 name: bilibili-video-summary
-description: Summarize B站 (Bilibili) videos by extracting AI-generated subtitles. Handles cookie-based authentication from Dia or Chrome browsers, WBI signing, multi-part videos, and transcript extraction. Use when the user shares a B站 video URL and wants a summary or analysis of its content. Falls back to video download + audio extraction when no subtitles are available.
+description: Summarize B站 (Bilibili) videos with a subtitle-first pipeline and bounded local whisper.cpp ASR fallback. Handles optional Dia/Chrome cookies, WBI signing, provenance, and private temporary media. Use when the user shares a B站 video URL and wants a summary or analysis of its content.
 ---
 
 # B站视频总结 (Bilibili Video Summary)
 
-总结B站视频：自动从浏览器提取登录态 → 获取AI字幕 → 拼接文本 → 交给模型总结。
+总结B站视频：尝试浏览器登录态（失败时匿名继续）→ 优先获取平台字幕 → 无字幕时下载音频并用本地 whisper.cpp 转写 → 交给模型总结。
 
 ## 前置依赖
 
@@ -16,11 +16,16 @@ cd skills/bilibili-video-summary
 uv sync
 ```
 
-可选的 ASR fallback 才需要外部视频/音频工具，例如 `yt-dlp`、`you-get`、`ffmpeg`。不要默认安装这些工具；缺失时告知用户即可。
+Atlas 的 `bilibili-summary-v4` ASR fallback 需要 `yt-dlp`、`ffmpeg`、`whisper-cli` 和 multilingual `small` 模型。它们由 macsp 的 `nix-config` 声明；模型是可重建缓存，不进入 Git。若模型不存在，运行：
+
+```bash
+mkdir -p "$HOME/Library/Caches/Lumio/asr/whisper"
+whisper-cpp-download-ggml-model small "$HOME/Library/Caches/Lumio/asr/whisper"
+```
 
 ## 应用场景与工作流程
 
-本 skill 支持三种使用场景：
+本 skill 支持四种使用场景：
 
 ### 场景 1：直接链接总结
 
@@ -51,6 +56,20 @@ uv run python scripts/watch_later.py delete 3 -c /tmp/bilibili_cookies.txt
 1. 先 `list` 展示全量，让用户确认
 2. 确认后逐条 `fetch_subtitle.py` → 总结（79 个视频约 80+ 次 API 调用，分批处理，中途暂停让用户确认是否继续）
 3. 全部完成后 `watch_later.py delete --all --yes`
+
+### 场景 4：Atlas 收藏夹自动队列
+
+`Atlas` 收藏夹是无人值守采集队列，不需要模型判断视频是否属于知识类：用户把希望处理的视频明确收藏到这里即可。
+
+```bash
+# 只读列出队列
+uv run python scripts/atlas_queue.py list -c /tmp/bilibili_cookies.txt --json
+
+# 仅在 Atlas 已确认 summary Resource 发布成功后，清理单个视频
+uv run python scripts/atlas_queue.py cleanup -c /tmp/bilibili_cookies.txt --bvid BV1sE7h6VESd
+```
+
+`cleanup` 会分别从 `Atlas` 收藏夹和「稍后再看」移除该视频；某一处已经不存在时仍视为成功。脚本没有批量清空命令。总结、Resource 发布或验证失败时不得调用清理。
 
 ## 脚本用法
 
@@ -88,20 +107,16 @@ uv run python scripts/fetch_subtitle.py <B站链接或BV号> -c /tmp/bilibili_co
 
 ### Fallback: 无字幕时
 
-当视频没有 AI 字幕时（常见于老视频或未开启字幕功能的视频），走视频下载路径：
+`bilibili-summary-v4` 自动执行以下受限流程，不需要手动拼接 shell 命令：
 
 ```bash
-# 方案A：you-get（推荐，能绕过大部分反爬）
-you-get --no-caption -o /tmp/ -O bilibili_video "https://www.bilibili.com/video/BVxxxxxx/"
-
-# 方案B：yt-dlp
-yt-dlp --cookies-from-browser chrome -f "best[height<=720]" -o "/tmp/bilibili_video.mp4" "https://www.bilibili.com/video/BVxxxxxx/"
-
-# 提取音频
-ffmpeg -y -i /tmp/bilibili_video.mp4 -vn -acodec libmp3lame -q:a 5 /tmp/bilibili_audio.mp3
-
-# 交给 Gemini 或其他 ASR 分析
+yt-dlp bestaudio -> ffmpeg PCM s16le/16kHz/mono -> whisper.cpp JSON -> transcript Resource
 ```
+
+- 默认最长 7200 秒，可用 `BILIBILI_ASR_MAX_DURATION_SECONDS` 收紧。
+- 多 P 视频在没有平台字幕时会明确失败，避免只处理第一 P 却产生误导性摘要。
+- 下载的音频、WAV 和 whisper JSON 只保存在任务临时目录，成功、失败或取消后都会清理。
+- Atlas 只记录转写来源、语言、引擎/模型和外部 transcript ArtifactRef，不保存原始媒体。
 
 ### 稍后再看管理
 
@@ -119,14 +134,41 @@ uv run python scripts/watch_later.py delete --bvid BV1sE7h6VESd -c /tmp/bilibili
 uv run python scripts/watch_later.py delete --all -c /tmp/bilibili_cookies.txt
 ```
 
+### Atlas 收藏夹队列
+
+```bash
+# 精确查找名为 Atlas 的收藏夹，并列出所有分页内容
+uv run python scripts/atlas_queue.py list -c /tmp/bilibili_cookies.txt --json
+
+# 成功发布后，幂等清理一个 BV 号（Atlas 收藏夹 + 稍后再看）
+uv run python scripts/atlas_queue.py cleanup -c /tmp/bilibili_cookies.txt --bvid BV1sE7h6VESd
+```
+
+收藏夹名称必须精确且唯一。自动化只允许逐条清理，不调用 `watch_later.py delete --all`。
+
+### 夜间控制器
+
+`nightly_atlas_queue.py` 是 RFC 0006 的一次性控制器，由 `nix-config` 的 macOS LaunchAgent
+在 02:00 启动。它会临时启动 Pi RPC/headless executor，复用 `bilibili-summary-v4`，并只在
+Atlas 能读到与当前 Run 匹配的 summary Resource 后调用逐条清理。不要把它改成第二套总结
+实现，也不要把外部删除放进 summary handler。
+
+```bash
+# 通常由 launchd 调用；手动验收时也使用同一入口
+uv run python scripts/nightly_atlas_queue.py
+```
+
+已有 summary Resource 的 Source 不会重新总结，只会重试幂等清理。已有 failed/cancelled
+Run 且没有 summary Resource 时保持原视频并要求人工重试，避免每晚重复消耗模型和 ASR。
+Mac 处于睡眠时，日历任务可能推迟到下次唤醒。
+
 ## 注意事项
 
 技术实现细节（字幕链路、API 端点、Cookie 解密、WBI 签名）见 `TECHNICAL.md`——排查脚本问题时按需读取。
 
-- **必须登录**：B站 AI 字幕接口在未登录时返回空列表，必须从浏览器提取 SESSDATA
-- **登录过期**：如果字幕接口突然返回空，可能是 cookie 过期，重新运行 Step 1
+- **Cookie 是增强而非硬依赖**：登录态可提高字幕和受限媒体的可用性；公共视频会在提取失败时匿名继续。
+- **登录过期**：如果原本可见的字幕突然回退到 ASR，可重新运行 Step 1 排查 cookie。
 - **Python 环境**：在 `skills/bilibili-video-summary` 下使用 `uv sync` 初始化，之后用 `uv run python ...` 运行脚本
 - **BV 号格式**：传给 `--bvid` 的值必须保留 `BV` 前缀，例如 `BV1sE7h6VESd`
 - **凭证清理**：总结完成后删除本次生成的 `/tmp/bilibili_cookies.txt`，不要把内容打印到模型上下文或写入仓库
-- **yt-dlp B站 412 问题**（2026年7月）：B站更新了 WBI sign 算法，yt-dlp 暂未跟进，建议优先用 you-get 下载视频
-- **you-get 不支持字幕提取**：只能用于下载视频本身，字幕仍需通过 API 获取
+- **资源边界**：字幕和 ASR 结果都是机器生成的 Resource，不会自动成为 Knowledge Comment。

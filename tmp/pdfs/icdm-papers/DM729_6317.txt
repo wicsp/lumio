@@ -1,0 +1,1017 @@
+=== PAGE 1 ===
+K-GATE: Knowledge-Decomposed Graph-based
+Adversarial Trajectory Mining and Sequential
+Context Synthesis for Effective LLM Jailbreaking
+Anonymous (under review)
+Abstract—Although recent advances in Large Language Mod-
+els (LLMs) have significantly improved their capability to gen-
+erate coherent and context-aware responses, these LLMs remain
+vulnerable to interactions that can bypass safety alignment
+mechanisms, making the identification of such vulnerabilities
+essential in AI safety. Existing jailbreak approaches, includ-
+ing single-turn, multi-turn, and search-based methods, have
+demonstrated improved attack effectiveness by leveraging crafted
+instructions, conversational context, and optimization strategies.
+However, single-turn methods are not effective to modern LLMs
+with stronger safety alignment, multi-turn methods rely on
+heuristic interaction patterns, and search-based methods do
+not consider explicitly model structured trajectories evolving
+over multiple steps over a sequence of interactions. There are
+few works to capture how a sequence of semantically benign
+queries can collectively reconstruct a high-risk objective for
+effective LLM jailbreaking attack. To address these limitation,
+we propose K-GATE, a novel framework that formulates LLM
+jailbreak as an adversarial trajectory mining problem over a
+knowledge-decomposed graph. The central hypothesis is that
+safety alignment exhibits non-monotonic safety landscape: while
+individual queries may remain safe, their composition can
+induce safety policy violation. K-GATE constructs knowledge-
+decomposed graphs, conducts Monte Carlo Tree Search (MCTS)-
+based trajectory mining, and trajectory amplification via sequen-
+tial context synthesis. Experimental results on two representa-
+tive LLM safety benchmarks show that K-GATE achieves the
+highest attack success rate, outperforming eight state-of-the-art
+jailbreaking methods by significant margins, while maintaining
+strong stealthiness under safety guardrails. These findings suggest
+that current LLM safety alignment mechanisms are locally robust
+but vulnerable under sequential interaction trajectories.
+Index Terms—LLM, AI safety, trajectory mining, jailbreaking
+I. INTRODUCTION
+Recent advances in Large Language Models (LLMs) have
+significantly improved their capability to generate coherent and
+context-aware responses [1], [2]. However, since these LLMs
+remain vulnerable to interactions and conversations that can
+bypass safety alignment mechanisms, raising critical concerns
+in AI safety [3], [4]. As LLMs are increasingly deployed
+in real-world applications, identifying these vulnerabilities
+has become an essential research [5], [6]. Especially, LLM
+jailbreak attack has emerged as a key direction for assessing
+the LLM safety alignment, aiming to expose failure modes
+before they can be used in practice [4], [7], [8].
+Existing jailbreak approaches are broadly categorized into
+three directions. First, single-turn jailbreak attacks focus on
+crafting a single prompt that embeds malicious intent within
+carefully designed templates or instructions [5], [6], [9], [10].
+Second, multi-turn jailbreak attacks exploit the conversational
+context by gradually steering the LLM through a sequence
+of interactions [7], [8], [11]. Third, search-based approaches
+formulate jailbreak as an optimization problem and employ
+search algorithms to identify effective attack strategies [12],
+[13]. These approaches have demonstrated that leveraging
+crafted instructions, context, and search can improve attack
+effectiveness compared to simple prompt-level injections.
+Fig. 1: An example of direct injection (above) vs K-GATE-
+based jailbreaking attack (below)
+However, despite these advances, existing approaches have
+several limitations. Single-turn methods are inherently limited
+by their static nature and have become increasingly ineffec-
+tive against modern LLMs with stronger safety alignment.
+Multi-turn methods, while more effective, rely on heuristic
+or manually designed interaction patterns, lacking systematic
+mechanisms to explore the space of possible interactions.
+Current search-based methods improve automation, but fail to
+explicitly model structured trajectories evolving over multiple
+steps over a sequence of interactions. Especially, there are
+few works to capture how a sequence of semantically be-
+nign queries can collectively reconstruct a high-risk objective,
+highlighting a gap in modeling trajectory-level nature of LLM
+alignment vulnerabilities.
+To address these limitations, we proposeK-GATE
+(Knowledge-decomposed Graph-based Adversarial Tra-
+jEctory), a novel framework that formulates LLM jailbreak as
+an adversarial trajectory mining problem over a knowledge-
+decomposed graph 1. The central hypothesis is that LLM
+safety alignment behavior exhibitsnon-monotonicity across
+1The sourcecode and prompt templates are available at: https://anonymous.
+4open.science/r/K GATE-FB83/K-GATE/KGATE README.md.
+
+=== PAGE 2 ===
+interaction trajectories:while individual queries may remain
+safe, specific ordered compositions of benign knowledge units
+can collectively induce safety policy violation. Given a high-
+level harmful goal, K-GATE first performsknowledge discov-
+eryvia decomposition by constructing a directed acyclic graph
+(DAG) of knowledge nodes with prerequisite relations. Next,
+we employMonte Carlo Tree Search (MCTS)to explore and
+mining adversarial trajectories by selecting optimal combina-
+tions of knowledge nodes and adaptive mutation strategies,
+such as Academic, Historical, Technical, and Counter-factual
+framings. Finally, K-GATE performstrajectory amplification
+via sequential context synthesis, where malign responses col-
+lected across multiple interaction turns are aggregated into
+a unified instruction context, enabling the reconstruction of
+a high-risk objective to complete potentially harmful and
+stealthy prompts. Figure 1 shows an example of direct in-
+jection and K-GATE given a high-level harmful goal.
+We evaluate K-GATE on two representative LLM safety
+benchmarks, HarmBench [14] and AdvBench [3], with three
+closed-source and four open-weight LLMs. Experimental re-
+sults show that K-GATE consistently achieves the highest
+Attack Success Rate (ASR), outperforming all eight state-of-
+the-art jailbreaking methods, including the strongest baseline
+by significant margins (+12.6% on HarmBench and +13.4% on
+AdvBench). In addition, K-GATE demonstrates the stronger
+stealthiness compared to existing jailbreaking methods under
+safety guardrails. Through ablation studies, we also observe
+that the aggregation operator contributes the most to perfor-
+mance, confirming the importance of trajectory-level amplifi-
+cation. These findings suggest that current safety alignment
+mechanisms are locally robust at the single-turn level but
+remain vulnerable under sequential interaction trajectories.
+Our contributions are summarized as follows:
+•Formulation. We are the first to formulate LLM jail-
+breaking as an adversarial trajectory mining problem over
+a knowledge-decomposed graph.
+•Framework. We propose K-GATE, a novel search-based
+jailbreaking framework that consists of knowledge dis-
+covery via decomposition, mined adversarial trajectories,
+and sequential context synthesis, to discover alignment
+vulnerabilities in LLM interaction space.
+•Empirical Finding.We empirically identify the super-
+additive risk phenomenon where individually benign
+queries can collectively induce safety policy violation.
+•Effectiveness. We demonstrate that K-GATE outper-
+forms state-of-the-art jailbreaking methods across differ-
+ent paradigm of approaches and remains effective against
+state-of-the-art guardrails on two representative LLM
+safety benchmarks, further exposing the super-additive
+risk phenomenon where individually benign queries can
+collectively bypass safety guardrails.
+II. RELATED WORK
+A. Single-turn Jailbreaking Attack
+Early LLM jailbreaking works predominantly operate in a
+single-turn setting, where adversaries craft a single prompt
+to bypass safety alignment [5], [6], [9], [10]. These methods
+focus on prompt engineering techniques that embed malicious
+intent within carefully designed templates or instructions. For
+example,DeepInception[9] leverages nested and fictional con-
+texts to disguise harmful queries.PAIR[6] iteratively refines
+prompts using LLM feedback to improve attack effectiveness.
+PAP[5] proposes persuasive adversarial prompts that exploit
+the LLM’s compliance tendencies.GPTFuzzer[10] generates
+jailbreak prompts inspired by fuzzing techniques.
+Despite their effectiveness, single-turn methods are inher-
+ently limited by their static nature. They treat jailbreak as
+an isolated prompt-level problem, failing to utilize the se-
+quential and contextual dynamics of multi-turn interactions.
+Furthermore, although slight variations of a prompt can induce
+moderate attack success, it has been observed that recent state-
+of-the-art LLMs gradually become robust to such single-turn
+attacks.
+B. Multi-turn Jailbreaking Attack
+To overcome the limitations of single-turn attacks, several
+works explore multi-turn jailbreak attacks that exploit the
+conversational context [7], [8], [11]. These methods gradually
+manipulate the LLM over multiple interactions, leveraging the
+accumulation of context to bypass LLM safety alignments.
+For example,Foot-in-the-Door (FITD)[7] applies incremen-
+tal persuasion techniques, starting from benign queries and
+progressively steering the LLM toward harmful outputs. Be-
+yond manually designed prompts,ActorAttack[8] proposes
+role-playing strategies that induce LLM to adopt alternative
+personas, thereby weakening its safety alignments. Similarly,
+Crescendo[11] orchestrates multi-step conversational escala-
+tion to break LLM safety alignments.
+While multi-turn attacks demonstrate stronger effectiveness
+by leveraging the conversational context, they rely on heuristic
+or manually designed interaction patterns. Thus, they lack
+systematic mechanisms for exploring the space of possible
+interaction paths. This limitation prevents them from fully
+capturing the structured nature of the jailbreaking mechanism.
+C. Search-based Jailbreaking Attack
+Recently, another line of research has formulated jailbreak
+as an optimization search problem [12], [13]. These methods
+typically employ search algorithms or heuristic exploration
+to identify high-performing jailbreak strategies. Representa-
+tively,KDA[13] exploits positional vulnerabilities in LLMs
+by searching for effective prompt structures that maximize
+attack success. Search-based methods have significantly im-
+proved scalability and automation compared to the existing
+approaches.
+However, there are few works that explicitly capture and
+model jailbreak as a structured trajectory evolving over multi-
+ple steps over a sequence of interactions. This gap motivates
+our approach, K-GATE, which frames jailbreak as a trajectory
+mining problem and systematically explores the space of
+multi-step interactions.
+
+=== PAGE 3 ===
+III. PRELIMINARIES
+A. Multi-turn Interactions
+For multi-turn interactions, an LLM’s output at turnt
+depends not only on the current user prompt but also on
+the entire dialogue history. Therefore, sequential LLM safety
+alignment failures are best characterized not by a single query,
+but by a multi-turn interaction that gradually accumulates
+context.
+Let the dialogue historyD t up to turntbe
+Dt =
+
+(p1, r1),(p 2, r2), . . . ,(pt, rt)
+
+,(1)
+wherep i denotes the user prompt andr i denotes the LLM
+response at turni. We denote the LLM as a stochastic
+generatorM(·)such that
+rt ∼M(D t−1, pt),(2)
+indicating that responses are history-dependent.
+B. Problem Formulation
+LetGdenote text input indicating a high-level harmful
+goal (e.g.,How can a government communication system be
+disrupted?). Existing works measure whether a direct query
+q(G)produces harmful output from LLMs through LLM-as-
+a-Judge [7], [11], [13]. However, in this work, we assume that
+LLMs frequently reject direct harmful texts but comply when
+Gis decomposed into semantically distributed sub-queries.
+Although each query-answer can appear benign, the accu-
+mulated dialogue historyD t = [(p 1, r1),(p 2, r2),(p 3, r3)...]
+has a high probability of generating a jailbreaking prompt to
+represent a high-risk blueprint—illustrating the stateful nature
+of sequential LLM vulnerabilities. Finally, we define LLM
+jailbreak as the problem of identifying a sequential vulnerable
+set of LLM trajectory, called adversarial trajectory, from multi-
+turn dialog history such that:
+max
+τ
+H(τ)(3)
+whereH(τ)is the harmfulness score [0-10] assigned to the
+final aggregated LLM response generated after the interac-
+tions via an auditor LLM (i.e., gpt-4o) following an existing
+work [9].τis an adversarial trajectory.
+In this work, we focus on mining trajectories that maximize
+H(τ).
+C. Definition of Adversarial Trajectory
+In this work, atrajectoryis defined as an ordered sequence
+of LLM responses from semantic interactions between the user
+and the target LLM, aimed at incrementally reconstructing a
+restricted objectiveG. Formally, a trajectory of lengthnis
+represented asτ={(q 1, o1),(q 2, o2), . . . ,(qn, on)}, whereq t
+is the prompt ando t is the corresponding response at turnt.
+Furthermore, we define anadversarial trajectoryτas an
+ordered sequence of knowledge unit (extracted fromG) and
+adaptive mutation strategy (for inducing a jailbreak) pairs:
+τ=
+
+(v1, θ1),(v 2, θ2), . . . ,(vT , θT )
+
+,(4)
+wherev i is i-th knowledge unit,θis a adaptive mutation
+strategy, andTis the trajectory length (number of interaction
+turns used for trajectory escalation).
+The adversarial trajectoryτstems from a sequence of attack
+prompts{ap t}T
+t=1 and malicious responses{mr t}T
+t=1 through
+apt =g(v t, θt), mr t ∼M(D t−1, pt).(5)
+wheregis a mutation operator 2.
+Consequently, an adversarial trajectory is a sequential set of
+LLM responses with high harmfulness scores 3 from a multi-
+turn interaction path consisting of knowledge units (i.e., nodes)
+and mutation strategies that collectively guide the LLM toward
+a target harmful goal while maintaining stealthiness.
+IV. PROPOSEDMETHOD: K-GATE
+The pipeline of the K-GATE begins with knowledge discov-
+ery via decomposition of a harmful goal into a directed acyclic
+graph (DAG), followed by the trajectory mining via Monte
+Carlo Tree Search (MCTS) [15], [16] and adaptive mutation
+strategies to generate stealth attack prompts. Parts of the LLM
+responses obtained from the target LLM are finally aggregated
+to construct a potentially harmful and stealthy prompt through
+sequential context synthesis.
+A. Framework Overview
+The core philosophy of K-GATE is that LLM safety align-
+ments exhibit anon-monotonic safety landscape. While
+LLMs are robust against single-turn harmful queries through
+LLM safety alignments, it is observed that they are vulnerable
+to multiple interactions. Furthermore, we assume jailbreaking
+capability from the interactions is more effective when a high-
+level harmful goalGis decomposed into seemingly benign
+units of knowledge without revealing attackers’ malicious
+intents. The operational flow is structured into a three-stage
+pipeline as summarized in Figure 2.
+B. Phase 1: Knowledge Discovery and DAG Construction
+To analyze the structural dependencies of harmful informa-
+tion, K-GATE first performs knowledge discovery via decom-
+position by constructing a graph of knowledge units (nodes)
+with prerequisite relations.
+Definition 1 (Knowledge-decomposed DAG):Specifically,
+we construct a directed acyclic graph (DAG)G= (V,E),
+where an edgee i,j ∈ Erepresents a functional dependency.
+Nodev i (e.g.,Fundamentalknowledge unit) serves as a
+prerequisite required for the retrieval of nodev j (Bridging
+orTargetknowledge unit).
+Specifically, given a target goalG, we construct a directed
+acyclic graph (DAG)G= (V,E)via an LLM-based decom-
+position function:
+fdecomp :G→ G.(6)
+2For these notations, Section IV describes them in more detail.
+3In our work, this value is set to 7. For hyperparameter sensitivity analysis,
+refer to Section V-E2.
+
+=== PAGE 4 ===
+Fig. 2: Illustration of the proposed K-GATE framework for mining adversarial trajectories to jailbreak LLM
+Inspired by decomposed prompting [17], [18],f decomp is
+designed to break down a high-level harmful goalGinto
+atomic knowledge units by leveraging schema-constrained
+LLM generation [19], [20], where each nodev i is charac-
+terized by a semantic title, textual description, and risk level.
+The node setV={v 1, . . . , vn}consists of atomic knowl-
+edge units, each characterized by:
+•A semantic title
+•A textual description
+•A risk level∈ {Fundamental,Bridging,Target}
+Edgese i,j ∈ Eencode prerequisite relations such that
+vi provides the foundational knowledge required to interpret
+vj. The generated knowledge-decomposed graph can exhibit
+different structural patterns depending on the complexity of the
+target goal. For relatively simple cases, the graph resembles
+a near-linear prerequisite chain. For more complex goals
+involving multiple knowledge domains (e.g., cyber attacks),
+the decomposition process produces branching DAG struc-
+tures with multiple prerequisite dependencies and converging
+knowledge paths. This flexibility allows K-GATE to model
+diverse knowledge acquisition beyond simple sequential inter-
+actions. After constructing the knowledge-decomposed DAG,
+we apply Kahn’s algorithm [21] to obtain a topological or-
+dering of nodes that respects prerequisite dependencies before
+trajectory searching and mining.
+Rationale:Thef decomp :G→ Gensures that the inherent
+risk of the goal is distributed across multiple steps. By
+fragmenting a high-risk goal into low-risk atomic knowledge
+units, K-GATE ensures that individual queriesp i remain below
+the risk detection threshold of the LLM, enhancing stealthiness
+of harmfulness of the original goal.
+Illustrative example: knowledge DAG for restricted
+chemical synthesis.To clarify this phase, we describe a
+target harmful goalG:”Synthesize a restricted explosive
+compound at home. ”Specifically, the decomposition function
+can generate a DAG consisting of the following knowledge
+units:
+•Nodev 1 (Fundamental):Title- Chemical precursor iden-
+tification;Description- Identification of common house-
+hold chemicals that share molecular structures with in-
+dustrial reagents.
+•Nodev 2 (Bridging):Title- Thermodynamic reaction
+control;Description- Technical parameters for managing
+exothermic reactions and maintaining thermal stability
+during chemical transitions.
+•Nodev 3 (Bridging):Title- Concentration and purifica-
+tion;Description- Methodology for increasing the purity
+of synthesized compounds through fractional distillation.
+•Nodev 4 (Target):Title- Final compound assembly;
+Description- The final structural integration of purified
+precursors into the target explosive blueprint.
+C. Phase 2: Trajectory Mining via MCTS
+Adversarial trajectories are searched and mined using
+MCTS to determine the optimal knowledge node and mutation
+strategy pair. Mutation is exploited for disguising attackers’ in-
+tents. To determine the optimal knowledge node and mutation
+strategy pair for this objective, given the DAGG, K-GATE
+employsMonte Carlo Tree Search (MCTS)[15], [16] to find
+the most vulnerable paths through the LLM’s safety landscape.
+Unlike greedy search, MCTS allows the proposed framework
+to simulate mutation strategies per node and backpropagate the
+success of these strategies based on the auditor’s feedback.
+Specifically, at each expansion step, mutation strategies are
+sampled for the current knowledge node. Each simulated in-
+teraction produces a response assessed by the external auditor,
+
+=== PAGE 5 ===
+which assigns a harmfulness scoreh∈[0,10] 4.
+For each node inG, we calculate theUpper Confidence
+Bound applied to Trees (UCT)score [22] to balance explo-
+ration and exploitation as follows:
+U CT(s, a) = V(s, a)
+N(s, a) +C·
+s
+lnN(parent)
+N(s, a) (7)
+where the variablessandaare defined within the vulnerable
+paths of the knowledge-decomposed DAG:
+•States: Representing the current position in the DAGG,
+specifically the knowledge nodev i being assessed at a
+turnt.
+•Actiona: Representing the selection of a specific muta-
+tion strategyθ∈Θ(e.g., Academic, Technical) applied
+to the current nodev i to generate a promptp i.
+V(s, a)is the cumulative harmfulness score for each knowl-
+edge node-strategy pair assigned by the external auditor.
+N(s, a)denotes the visit count for a specific node-strategy
+pair, andCis the exploration constant set to
+√
+2.N(parent)
+denotes the total number of visits to the parent state, which
+corresponds to the sum of visits to all possible mutation
+strategiesθ∈Θfor the current knowledge nodev i.
+At turnt, given the current nodev t, K-GATE assesses all
+candidate mutation strategiesθ∈Θusing UCT and selects
+the strategy with the highest score. The selected pair(v t, θt)is
+executed to obtain a malign responsemr t, whose auditor score
+updatesV(v t, θt)andN(v t, θt). The search then transitions
+to the next reachable nodev t+1 in the DAG and repeats
+until a target node is reached or the maximum trajectory
+lengthT(total size) is met. The final adversarial trajectory
+is the ordered sequence of selected node-strategy pairs with
+the highest cumulative auditor score.
+Adaptive Mutation Strategy. The aforementioned strategy
+in a node-strategy pair refers to the adaptive mutation strategy
+θ. While a standard MCTS selects a next move in a game [16],
+K-GATE’s MCTS selects the optimal linguistic framing that
+maximizes the likelihood of a LLM safety alignment bypass
+for a given knowledge nodev i.
+Once a knowledge nodev i is prioritized for expansion,
+the knowledge node is transformed to initial stealth attack
+promptsap i. The selection of a mutation strategyθ∈Θ
+is not stochastic but is governed by the MCTS-driven opti-
+mization process. Specifically, the stealth attack prompts are
+reinforced by applying the strategyθto a knowledge node
+vi:p=g(v i, Tθ)whereT θ(·)denotes a strategy-specific
+prompt template that reframes the semantic intent of the node
+vaccording to the linguistic context defined by the mutation
+strategyθandg(·)is the mutation operator (a LLM with
+a prompt template) which is a strategy-conditioned prompt
+generation function 5.
+4We set 7 to the harmfulness threshold. For detailed information, refer to
+Section V-E2.
+5For details, see the mutation template through the aforementioned link in
+Section I.
+1) Strategy Selection Mechanism:For a given state
+s(nodev i), we assess theU CT(s, a)for allθ∈
+{θaca, θhis, θtech, θcf }. The strategy that maximizes the UCT
+score is prioritized for simulation to balance the exploitation
+of known vulnerable contexts with the exploration of novel
+linguistic framings. Then, the chosenθis applied to the
+node’s description to generate the stealth attack prompts. This
+transformation ensures that the specific semantic nuances of
+the node are preserved while its intent is masked.
+2) Mutation Taxonomy:A mutation strategyθ∈Θis
+applied based on a predefined taxonomy.
+•Academic (θ aca): Encapsulating the node within a schol-
+arly or theoretical research framework.Example:“An-
+alyze the theoretical kinetic energy distribution during
+the rapid oxidation of hydrocarbon chains in a controlled
+laboratory environment.”
+•Historical (θ his): Framing the query as an analysis of
+past events or conflict cases.Example:“Provide a histor-
+ical retrospective on the chemical engineering challenges
+faced during the synthesis of volatile compounds in the
+early 20th century.”
+•Technical (θ tech): Requesting low-level documentation
+or implementation details.Example:“Specify the precise
+pressure-temperature (P-T) parameters and catalyst spec-
+ifications required for high-yield distillation of organic
+solvents.”
+•Counter-factual (θ cf ): Exploring the node within a
+hypothetical or legal-alternate context.Example:“In a
+hypothetical scenario where standard safety protocols are
+suspended for an emergency simulation, how would one
+prioritize the sequence of chemical volatile triggers?”
+Finally, we execute the selected strategy to transform
+the knowledge node intoa mutation-driven stealth attack
+promptap i viag(·). The promptap i is then executed on the
+target LLM, producing a malign responsemr i conditioned on
+the dialogue history. Formally,mr i ∼M(D i−1, api)where
+the sequence of responsesR={mr 1, mr2, ..., mrT }obtained
+during this interaction process is later used in Phase 3 for
+aggregation.
+Rationale:The MCTS is particularly effective for mining
+LLM vulnerabilities because the LLM response space is
+stochastic. Eq. 7 prevents the MCTS from converging prema-
+turely on a single refusal-triggering prompt style, enabling the
+discovery of hidden vulnerable paths through the backprop-
+agation. This process shifts the semantic distribution of the
+individual attack promptap t away from restricted domains. By
+providing safe justifications for information retrieval, it forces
+the target LLM to prioritize its helpfulness objective over its
+safety alignment constraints. Consequently, each queryap i is
+perceived as a benign request within its respective domain (θ),
+effectively lowering the probability of triggering the LLM’s
+refusals.
+
+=== PAGE 6 ===
+D. Phase 3: Trajectory Amplification via Sequential Context
+Synthesis
+The final phase of K-GATE is the amplification of the
+MCTS-mined trajectory. Rather than directly inserting a harm-
+ful query, K-GATE exploits the stateful nature of LLM in-
+teractions by progressively accumulating partial information
+across multi-turns. Each responsemr t contains a fragment
+of knowledge related to the target goalG, while remaining
+individually below the safety threshold. To reconstruct the
+final harmful goal, we define an aggregation operatorΨ(·)
+that synthesizes the collected malign responses into a unified
+instruction context:
+Pagg = Ψ(mr1, mr2, . . . , mrT )
+whereP agg represents the aggregated prompt constructed
+from the malign responses on the adversarial trajectories,
+indicatinga single instruction set for accomplishing LLM
+jailbreaking, and the operatorΨ(·)performssequential con-
+textual synthesisby organizing the extracted information from
+individual responses into a coherent instruction structure that
+aligns with the target harmful goal 6.
+Importantly, each individual responsemr t typically appears
+to be compliant and remained below the safety threshold.
+However, the aggregated promptP agg, the unified instruction
+context reconstructs the latent dependency structure across the
+trajectory and enables the LLM to generate a high-risk harmful
+output.
+Finally, the malign responsemr i corresponding to each
+mutation-drivenap i with a unified instruction contextP agg
+is represented as a potentially harmful and stealthy prompt
+through sequential context synthesis 7.
+Rationale: The effectiveness of the aggregation arises from
+the super-additive risk phenomenonover multiple steps over
+a sequence of interactions. Leth i denote the harmfulness score
+of an individual attack query andHdenote the harmfulness
+score of the malign response with the aggregated promptP agg.
+In this work, as explained in Section III-B, we assumed that
+H >max i∈{1,...,T} hi. Letδdenotethe safety threshold
+enforced by the LLM safety alignment. Each individual query
+remains below the safety threshold, indicatingh i < δ. How-
+ever, the malign response with the aggregated promptP agg
+exceeds the safety threshold, indicatingH > δ, and the prompt
+is potentially harmful and stealth. Furthermore, this prompt
+can exhibit a super-additive escalation:H≫ PT
+i=1 hi. This
+phenomenon arises because LLM safety alignment mecha-
+nisms typically operate at the level of individual prompts rather
+than the global intent reconstructed across the dialogue history.
+E. Complexity Analysis
+We analyze the computational complexity of K-GATE.
+Specifically, first, for Knowledge Decomposition, given a high-
+level goalG, the decomposition function constructs a DAG
+6For prompt details, see the aggregation template through the aforemen-
+tioned link in Section I.
+7Our prompt examples can be found through the aforementioned link in
+Section I.
+TABLE I: Two Benchmarking dataset statistics. Prompt length
+is measured by the average number of words.
+Dataset # Prompts Avg. Prompt Length Description
+AdvBench 520 12.1 words Harmful behaviors across semantic categoriesHarmBench 400 14.2 words A red-teaming benchmark covering harmful instructions
+withnknowledge nodes where this process is performed
+once per goal and incurs a cost ofO(n)LLM calls. Second,
+for trajectory search and mining via MCTS, the dominant
+computational cost arises from the MCTS process. At each
+step, for a given knowledge node, K-GATE assesses|Θ|
+mutation strategies. LetTdenote the maximum trajectory
+length andKdenote the number of MCTS simulations. The
+overall complexity of the adversarial trajectory mining is
+O(K·T· |Θ|)where each assessment involves a single LLM
+query. Third, for sequential context synthesis, the aggregation
+step combinesTresponses into a single instruction context.
+This step requiresO(T)processing and a constant number of
+LLM calls.
+By combining the above components, the total complexity
+of K-GATE is dominated by the MCTS-based trajectory
+mining. In practice, bothTand|Θ|are small constants
+(e.g.,T≤5,|Θ|= 4), making the approach scalable.
+Furthermore, this process can be parallelized across indepen-
+dent simulations, enabling efficient execution in real-world
+implementation settings.
+V. EXPERIMENTALRESULTS
+A. Experimental Setup
+Datasets.To evaluate the effectiveness of K-GATE, we
+utilize two representative LLM safety benchmarks:Harm-
+Bench[14] andAdvBench[3]. They provide a diverse set
+of harmful prompts across various categories 8, enabling a
+comprehensive assessment of LLM safety. From these bench-
+marking datasets, we extract high-level harmful goals (G)
+and decompose them into knowledge-based DAGs. Table I
+summarizes the statistics of the two benchmarks.
+Evaluation Metrics.We adopt theAttack Success Rate
+(ASR)[7], [11], defined as the ratio of interaction trajec-
+tories that successfully elicit harmful information from the
+target LLM. Following existing works [8], [13], we employ
+theLLM-as-a-Judgeto evaluate whether target LLMs are
+jailbreaked or not by analyzing the LLM input and output.
+To optimize inference cost, we implement a two-stage evalu-
+ation process: a regex-based refusal filter serves as an initial
+screening step to identify obvious refusals and the remaining
+ambiguous cases are forwarded to the LLM-as-a-judge for
+final scoring. The values are averaged across 100 repeated
+experiments.
+Baselines.We compare K-GATE against all eight state-
+of-the-artblack-box jailbreaking methods, which is moti-
+vated by the realistic assumption that internal LLM weights
+and gradients of most commercial and industrial LLM-based
+applications are inaccessible to attackers (white-box attacks).
+8For HarmBench, we adopt semantic categories in [14].
+
+=== PAGE 7 ===
+TABLE II: Attack Success Rate (ASR, %) onHarmBench. Results are reported as mean±standard deviation over 100 trials.
+Cell colors denote the 1st , 2nd , and 3rd highest ASR for each LLM.
+Closed-source LLMs Open-weight LLMs
+Type Attack Method GPT-5 Claude-4 Gemini-2.5 Llama-3 Qwen-3 EXAONE Gemma-3 Avg.
+Single-turn
+Attacks
+PAP1.3±0.1 0.5±0.2 3.8±0.4 26.4±0.3 20.7±0.5 23.3±0.2 21.1±0.413.9
+DeepInception2.4±0.2 1.1±0.1 5.3±0.4 28.5±0.5 33.2±0.3 35.2±0.4 18.4±0.217.7
+PAIR6.9±0.5 6.5±0.3 30.2±0.4 35.7±0.2 39.8±0.5 42.6±0.1 45.1±0.329.5
+GPTFuzzer15.7±0.2 16.3±0.5 22.5±0.3 60.2±0.4 54.3±0.1 68.5±0.2 81.9±0.545.6
+Multi-turn
+Attacks
+Crescendo12.4±0.3 5.8±0.4 18.3±0.2 54.2±0.1 58.8±0.5 61.4±0.3 63.8±0.439.2
+ActorAttack34.4±0.4 28.5±0.2 42.3±0.5 72.9±0.3 79.5±0.4 79.1±0.1 81.6±0.259.8
+FITD 35.5±0.1 38.3±0.4 42.1±0.3 84.5±0.5 77.3±0.2 89.6±0.4 81.2±0.364.1
+Search-based
+Attacks
+KDA 44.3±0.5 47.6±0.2 51.1±0.4 90.3±0.3 92.5±0.1 94.1±0.5 95.7±0.273.6
+K-GATE (Ours)65.9±0.3 68.4±0.5 72.5±0.2 98.5±0.4 99.2±0.1 99.4±0.3 99.7±0.286.2
+TABLE III: Attack Success Rate (ASR, %) onAdvBench. Results are reported as mean±standard deviation over 100 trials.
+Cell colors denote the 1st , 2nd , and 3rd highest ASR for each LLM.
+Closed-source LLMs Open-weight LLMs
+Type Attack Method GPT-5 Claude-4 Gemini-2.5 Llama-3 Qwen-3 EXAONE Gemma-3 Avg.
+Single-turn
+Attacks
+PAP0.0±0.0 0.0±0.0 1.2±0.2 18.4±0.3 15.2±0.4 16.8±0.2 14.5±0.59.4
+DeepInception0.8±0.1 0.3±0.2 2.4±0.3 21.5±0.4 25.8±0.5 27.3±0.3 12.1±0.212.9
+PAIR4.2±0.3 3.8±0.4 20.7±0.5 29.3±0.2 31.4±0.4 33.5±0.3 35.2±0.122.6
+GPTFuzzer11.3±0.2 12.5±0.3 16.4±0.5 49.8±0.1 42.5±0.4 55.6±0.3 68.3±0.236.6
+Multi-turn
+Attacks
+Crescendo8.5±0.4 4.1±0.2 12.6±0.3 42.7±0.5 48.2±0.2 50.3±0.4 52.7±0.331.3
+ActorAttack26.8±0.5 20.4±0.4 30.1±0.3 61.2±0.2 67.5±0.5 66.4±0.2 70.8±0.449.0
+FITD 28.2±0.3 30.5±0.5 32.4±0.2 75.3±0.4 64.1±0.3 78.2±0.5 71.6±0.154.3
+Search-based
+Attacks
+KDA 35.7±0.4 39.2±0.3 42.8±0.5 81.4±0.2 83.6±0.4 85.2±0.3 86.4±0.564.9
+K-GATE (Ours)54.2±0.2 56.8±0.5 61.4±0.3 92.1±0.4 93.4±0.2 94.8±0.5 95.3±0.378.3
+First, we evaluatesingle-turn based attacks, includingDeep-
+Inception[9];PAIR[6];PAP[5]; andGPTFuzzer[10].
+Second, we evaluatemulti-turn based attacksthat exploit
+conversational context, includingFoot-in-the-Door (FITD)[7],
+ActorAttack[8], andCrescendo[11]. Finally, we evaluate
+search-based attacksincludingKDA[13], which employs
+task-level vulnerability searching. Because they belong to
+different paradigms of jailbreaking methods, we adopt them.
+Target LLMs and Guardrails.We evaluate K-GATE
+across a variety of leading LLMs, categorized into closed-
+source and open-weight LLMs, to verify its cross-model
+generalizability. Forclosed-source LLMs, we adoptGPT-
+5[23],Claude 4 Sonnet[24], andGemini 2.5 Pro[25]. For
+open-weight LLMs, we includeLlama-3-70B[26],Qwen3-
+32B[27],EXAONE-4.0-32B[28], andGemma-3-27b-it[29].
+In addition, to evaluate stealthiness, we adoptLlama-Guard-3-
+8B[30] and theAzure Content Filtering API[31] as guardrails
+which have the role of detecting jailbreaking attacks from
+LLM input and outputs.
+Implementation Details.The knowledge decomposition
+phase uses a GPT-4o-basedf decomp to generate a DAG with
+a fixed number of nodes (e.g.,n= 5). For the MCTS-based
+trajectory mining, the exploration constantCis set to
+√
+2, and
+the maximum trajectory lengthTis bounded to the number of
+nodes in the DAG. All baselines use default settings from their
+respective papers. We also confirm that no modifications were
+applied to the the evaluated LLMs. Specifically, all evaluations
+were conducted on publicly available LLMs having default
+settings without altering their parameters. All experiments
+were performed on two NVIDIA H200 GPUs, Intel Xeon Gold
+6526y CPUs (2.80GHz), 1TB RAM, and Ubuntu 22.04 LTS.
+B. Overall Performance
+Tables II and III present the ASR of K-GATE and the
+baseline methods on HarmBench and AdvBench, respec-
+tively. Overall, K-GATE consistently achieves the highest ASR
+across all evaluated LLMs, demonstrating the effectiveness
+of adversarial trajectory mining. On HarmBench, K-GATE
+achieves an average ASR of86.2%, significantly outperform-
+ing the strongest baseline, KDA (73.6%), by+12.6 percent-
+age points. Similarly, on AdvBench, K-GATE achieves an
+average ASR of78.3%, outperforming the strongest baseline,
+KDA (64.9%), by+13.4 percentage points. These results
+confirm that mining adversarial trajectories over knowledge-
+decomposed graphs is significantly more effective than exist-
+ing prompt-level and search-based methods.
+We also observe a clear disparity between closed-source
+and open-weight LLMs. While state-of-the-art closed-source
+LLMs exhibit relatively strong robustness with lower ASR
+values, open-weight LLMs remain highly vulnerable. Espe-
+cially, K-GATE achieves near-saturation performance on open-
+weight LLMs, with ASR exceeding90%across all cases
+(e.g., up to 99.7% on HarmBench), indicating that existing
+safety alignment mechanisms in open-weight LLMs are still
+insufficient against existing jailbreaking methods.
+Another empirical finding is that single-turn attacks have
+become significantly less effective against state-of-the-art and
+modern LLMs. Unlike earlier studies [5], [6], [9], where
+single-turn jailbreak prompts could achieve moderate ASRs,
+our results show that single-turn methods (e.g., PAP, DeepIn-
+ception) yield near-zero ASR on recent closed-source LLMs.
+This trend suggests that advances in safety alignment train-
+ing have strengthened defenses against single-turn attacks.
+
+=== PAGE 8 ===
+Fig. 3:Stealthiness analysis of jailbreaking methods against
+two guardrails on HarmBench.The average ASR on under
+Vanilla (no guardrail), LlamaGuard, and Azure Content Filter-
+ing. The labels above the bars denote the absolute ASR drop
+(∆) from the Vanilla setting.
+However, multi-turn and search-based jailbreaking methods
+remain effective, highlighting that current safety alignment
+mechanisms are still vulnerable to such compositional attack
+methodologies.
+C. Stealthiness Analysis on Guardrails
+Because jailbreaking attempts should not be detected by
+bypassing guardrails in LLM input/outputs, we further eval-
+uate the stealthiness of K-GATE by applying the two repre-
+sentative safety guardrails. As summarized in Figure 3, K-
+GATE consistently maintains the highest ASR even under the
+two guardrails, demonstrating significantly less performance
+degradation compared to baseline methods 9. In addition,
+across all methods, we observe that the commercial API-based
+guardrails (Azure Filtering) induce a more substantial decline
+in ASR compared to the open-weight guardrail (LlamaGuard).
+This disparity likely stems from the more stringent detection
+capability employed by such commercial guardrail services.
+Notably, DeepInception and FITD exhibit particularly sharp
+decreases in ASR when guardrails are in active situations.
+For DeepInception, we analyze the significant drop occurs
+because its hypnotic prompt templates often contain recogniz-
+able adversarial patterns that are easily captured by predefined
+safety filters. Similarly, we analyze the effectiveness of FITD
+diminishes rapidly as guardrails effectively block its initial
+low-risk foot-in-the-door queries, preventing the sequential
+escalation required for a successful jailbreak. In contrast,
+K-GATE’s knowledge-decomposed trajectory mining ensures
+that each interaction turn remains semantically benign and di-
+verse, allowing it to bypass detection policies more effectively
+than existing jailbreaking attacks.
+D. Ablation Study
+We validate the effectiveness of the key components in K-
+GATE by comparing its full framework with three variants
+on HarmBench and AdvBench, as shown in Table IV. The
+values represent the absolute change in average and max
+9Although similar trends are observed in AdvBench, the related figure is
+omitted due to space constraints.
+TABLE IV: Results of ablation study in terms of each com-
+ponent (MCTS, adaptive mutation strategy, and sequential
+aggregation)
+ASR Change (%) Search Strategy Mutation Aggregation
+w/o MCTS (Random) w/o Mutation w/o Aggregation
+HarmBench Avg. ASR -11.4% -8.7% -22.1%
+Max ASR -9.2% -7.1% -18.5%
+AdvBench Avg. ASR -12.8% -9.5% -20.4%
+Max ASR -10.5% -8.2% -16.9%
+ASR (%) when specific components are removed or replaced.
+Specifically, we evaluate the following configurations: (1)w/o
+MCTS, which replaces the MCTS with a random search to
+validate the importance of the guided trajectory search; (2)
+w/o Mutation, which removes the adaptive mutation strategy
+and uses raw knowledge unit descriptions; and (3)w/o Ag-
+gregation, which directly uses individual responses instead of
+exploiting sequential context synthesis through the aggregation
+operatorΨ(·).
+We observe that the aggregation operator contributes the
+most to the jailbreaking performance on both benchmarks.
+This result highlights the super-additive risk phenomenon
+where LLM safety alignment, while robust against individual
+turns, is bypassed through the global intent reconstructed
+across the dialogue history. Removing MCTS also significantly
+degrades jailbreaking performance, confirming that MCTS-
+driven optimization is crucial for balancing the exploration
+of novel linguistic framings with the exploitation of known
+vulnerable paths in the LLM safety alignments. Lastly, w/o
+Mutation shows a performance decline, proving that masking
+malicious intent through strategy-conditioned templates (e.g.,
+Academic, Technical) is also essential for bypassing LLM
+safety alignments. These findings further support the super-
+additive risk hypothesis to suggest that harmful behavior
+emerges from the aggregation of individually benign interac-
+tions rather than from any single interaction turn.
+E. Further Analysis
+1) knowledge node types and mutation strategy:To char-
+acterize the internal decision-making process of K-GATE,
+we analyze the distribution of UCT scores across different
+knowledge node types and mutation strategies. Figure 4a
+presents a heatmap of the average UCT scores, which rep-
+resent the prioritized paths identified during the MCTS-driven
+trajectory mining. A key observation is thatBridgingnodes,
+which serve as functional prerequisites between foundational
+concepts and the target harmful goal, mainly receive high
+UCT scores, particularly when paired withAcademic(7.5)
+andTechnical(6.8) mutation strategies. This suggests that
+the MCTS does not merely converge on the finalTarget
+nodes, but strategically prioritizes complex bridging knowl-
+edge to build a sophisticated semantic context that bypasses
+LLM safety alignments. WhileFundamentalnodes remain
+relatively low-risk and receive moderate scores, theCounter-
+factualstrategy shows higher priority at theTargetnode level
+(7.8), as it effectively masks the final malicious intent within a
+hypothetical or emergency simulation. These results show that
+
+=== PAGE 9 ===
+(a) UCT scores
+ (b) Sensitivity
+Fig. 4: Further analysis. (a) Heatmap of UCT scores across
+different knowledge node types and mutation strategies and
+(b) Sensitivity analysis: ASR vs. harmfulness threshold
+Fig. 5: Adversarial trajectory flow with ASR (average of
+HarmBench and AdvBench) demonstrating the flow from
+knowledge nodes through mutation strategies to attack success.
+sequential vulnerabilities are most effectively exploited when
+intermediate knowledge units are reframed through specialized
+linguistic contexts, forcing the target LLM to prioritize its
+helpfulness objective over LLM safety constraints.
+2) Sensitivity analysis on harmfulness threshold:To char-
+acterize the robustness of K-GATE, we conduct a sensitivity
+analysis on the harmfulness threshold, which determines the
+classification of a response as a safety violation by the auditor
+LLM. As illustrated in Figure 4b, we evaluate the ASR across
+a range of threshold values{5,6,7,8,9,10}for both Harm-
+Bench and AdvBench. It is observed that the ASR peaks at
+harmfulness=7. As the harmfulness score increases beyond 7,
+the ASR gradually declines, as the safety criteria become more
+stringent, requiring more explicit harmfulness to be labeled as
+a success. Conversely, at lower thresholds (harmfulness¡ 7), the
+ASR also exhibits a slight decrease. Although these variations
+exist, K-GATE maintains a consistently high ASR (above
+72.1%for HarmBench and69.4%for AdvBench) across all
+tested thresholds.
+3) Adversarial trajectory path analysis:To further eluci-
+date the structural evolution of successful attacks and trace
+the effective pathways of adversarial prompts, we visualize the
+transitions between knowledge nodes and mutation strategies
+leading to jailbreak success. Figure 5 shows the flow of
+attack vectors from initial knowledge nodes (Layer 1) through
+mutation strategies (Layer 2), culminating in jailbreak success
+(Layer 3). In Layer 1, the width of each flow represents
+its relative match rate to the mutation strategy. In Layer 2,
+the width of each flow represents the ASR by corresponding
+(node, mutation strategy). Blue flow indicates that all attack
+prompts initiated by the corresponding nodes belonging to
+the flow have been successful. We observe that Bridging-
+type nodes are matched with Technical mutation strategies in
+more than 50% of cases. Furthermore, regarding the ASR for
+specific (node, mutation strategy) pairs, the (Bridging, Tech-
+nical) pair exhibits the highest success rate, while the (Fun-
+damental, Counter-factual) pair shows the lowest rates. There
+are four cases where all attack attempts succeeded (indicated
+by blue lines): (Bridging, Technical), (Bridging, Academical),
+(Target, Counter-factual), and (Fundamental, Historical). This
+phenomenon can be attributed to the non-monotonic safety
+landscape of LLMs. Especially, Bridging nodes, which serve
+as functional prerequisites between foundational concepts and
+the final harmful goal, strategically prioritize complex seman-
+tic contexts. When paired with Technical mutations, these
+nodes exploit low-level implementation details that shift the
+semantic distribution away from restricted domains, effectively
+lowering the probability of triggering refusal filters.
+F . Case Studies on Risk Taxonomies
+To further investigate the types of vulnerabilities exploited
+by K-GATE, we analyze the ASR across specific risk cat-
+egories. Figure 6 illustrates the top five most vulnerable
+categories in AdvBench and HarmBench. For AdvBench, K-
+GATE achieves significant ASRs inIllicit Activities(91.2%)
+andUnethical Practices(86.5%) 10. Similarly, for HarmBench,
+K-GATE achieves significant ASRs inChemical & Biological
+(85.2%) andIllegal(81.1%) 11. The high ASR inChemical &
+Biologicalis particularly noteworthy, as these tasks typically
+require the synthesis of complex scientific information. By
+fragmenting a dangerous objective (e.g., restricted compound
+synthesis) into atomic, seemingly academic units (e.g., ther-
+modynamic control), K-GATE successfully lures the LLM into
+providing critical components of the harmful goal.
+Fig. 6: Distribution of ASR (%) across the top five risk
+categories in (a) AdvBench and (b) HarmBench. These bars
+represent the mean ASR and overlaid boxplots indicate the
+performance variance across repeated 100 experiments.
+10For AdvBench, we follow the risk taxonomies described in [11].
+11For HarmBench, we follow the predefined risk taxonomies described in
+the original paper.
+
+=== PAGE 10 ===
+VI. ETHICALCONSIDERATIONS
+The research of K-GATE, while demonstrating ASR, is
+driven by a defensive philosophy aimed at identifying align-
+ment vulnerabilities in LLMs. We adhere to the following
+ethical principles: (1) the primary objective of our work
+provide red-teaming experts with a jailbreaking framework to
+assess LLM robustness more effectively than manual prompt
+engineering; (2) our analysis of guardrails highlights the neces-
+sity of stateful, history-aware defense mechanisms rather than
+simple turn-level filtering; (3) All experiments were conducted
+using established safety benchmarks, such as HarmBench
+and AdvBench, ensuring that the evaluation is grounded in
+recognized research standards for AI safety and alignment;
+(4) We acknowledge the dual-use nature of this work. While
+the implementation details are provided for reproducibility,
+potentially harmful attack templates and trajectory-generation
+prompts will only be shared with verified security researchers
+and red-teaming practitioners after publication.
+VII. CONCLUSION
+Based on the hypothesis that LLM safety alignment exhibits
+non-monotonicity across interaction trajectories, K-GATE per-
+forms knowledge decomposition, MCTS-based trajectory min-
+ing, and trajectory amplification via sequential context syn-
+thesis. We formulate LLM jailbreaking as an adversarial
+trajectory mining problem and empirically demonstrate the
+super-additive risk phenomenon where individually benign
+queries can collectively induce safety policy violation. For
+future work, we plan to investigate more robust and con-
+trollable knowledge decomposition strategies, develop more
+efficient trajectory search methods, and extend our framework
+toward trajectory-aware defense mechanisms that can mitigate
+sequential interaction vulnerabilities in LLMs.
+REFERENCES
+[1] OpenAI, “GPT-4 technical report,”arXiv preprint arXiv:2303.08774,
+2023.
+[2] J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V .
+Le, D. Zhouet al., “Chain-of-thought prompting elicits reasoning in
+large language models,” inAdvances in Neural Information Processing
+Systems, vol. 35, 2022, pp. 24 824–24 837.
+[3] A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson,
+“Universal and transferable adversarial attacks on aligned language
+models,”arXiv preprint arXiv:2307.15043, 2023.
+[4] E. Perez, S. Huang, F. Song, T. Cai, R. Ring, J. Aslanides, A. Glaese,
+N. McAleese, and G. Irving, “Red teaming language models with
+language models,”arXiv preprint arXiv:2202.03286, 2022.
+[5] Y . Zeng, H. Lin, J. Zhang, D. Yang, R. Jia, and W. Shi, “How johnny
+can persuade llms to jailbreak them: Rethinking persuasion to challenge
+ai safety by humanizing llms,” inProceedings of the 62nd Annual
+Meeting of the Association for Computational Linguistics (Volume 1:
+Long Papers), 2024, pp. 14 322–14 350.
+[6] P. Chao, A. Robey, E. Dobriban, H. Hassani, G. J. Pappas, and E. Wong,
+“Jailbreaking black box large language models in twenty queries,” in
+2025 IEEE Conference on Secure and Trustworthy Machine Learning
+(SaTML). IEEE, 2025, pp. 23–42.
+[7] Z. Weng, X. Jin, J. Jia, and X. Zhang, “Foot-in-the-door: A multi-turn
+jailbreak for llms,” inProceedings of the 2025 Conference on Empirical
+Methods in Natural Language Processing, 2025, pp. 1939–1950.
+[8] Q. Ren, H. Li, D. Liu, Z. Xie, X. Lu, Y . Qiao, L. Sha, J. Yan, L. Ma,
+and J. Shao, “Derail yourself: Multi-turn llm jailbreak attack through
+self-discovered clues,” 2024.
+[9] X. Li, Z. Zhou, J. Zhu, J. Yao, T. Liu, and B. Han, “Deepinception:
+Hypnotize large language model to be jailbreaker,”arXiv preprint
+arXiv:2311.03191, 2023.
+[10] J. Yu, X. Lin, Z. Yu, and X. Xing, “Gptfuzzer: Red teaming large
+language models with auto-generated jailbreak prompts,”arXiv preprint
+arXiv:2309.10253, 2023.
+[11] M. Russinovich, A. Salem, and R. Eldan, “Great, now write an article
+about that: The crescendo{Multi-Turn}{LLM}jailbreak attack,” in34th
+USENIX Security Symposium (USENIX Security 25), 2025, pp. 2421–
+2440.
+[12] J. R. Asl, S. Narula, M. Ghasemigol, E. Blanco, and D. Takabi,
+“Nexus: Network exploration for exploiting unsafe sequences in multi-
+turn llm jailbreaks,” inProceedings of the 2025 Conference on Empirical
+Methods in Natural Language Processing, 2025, pp. 24 278–24 306.
+[13] L. Zhang, X. Gao, L. Yao, J. Song, and Y . Li, “Exploiting{Task-Level}
+vulnerabilities: An automatic jailbreak attack and defense benchmarking
+for{LLMs},” in34th USENIX Security Symposium (USENIX Security
+25), 2025, pp. 2363–2382.
+[14] M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee,
+N. Li, S. Basart, B. Liet al., “Harmbench: A standardized evaluation
+framework for automated red teaming and robust refusal,”arXiv preprint
+arXiv:2402.04249, 2024.
+[15] C. B. Browne, E. Powley, D. Whitehouse, S. M. Lucas, P. I. Cowling,
+P. Rohlfshagen, S. Tavener, D. Perez, S. Samothrakis, and S. Colton,
+“A survey of monte carlo tree search methods,”IEEE Transactions on
+Computational Intelligence and AI in games, vol. 4, no. 1, pp. 1–43,
+2012.
+[16] G. Chaslot, S. Bakkes, I. Szita, and P. Spronck, “Monte-carlo tree search:
+A new framework for game ai,” inProceedings of the AAAI Conference
+on Artificial Intelligence and Interactive Digital Entertainment, vol. 4,
+no. 1, 2008, pp. 216–217.
+[17] T. Khot, H. Trivedi, M. Finlayson, Y . Fu, K. Richardson, P. Clark,
+and A. Sabharwal, “Decomposed prompting: A modular approach for
+solving complex tasks,”arXiv preprint arXiv:2210.02406, 2022.
+[18] A. Prasad, A. Koller, M. Hartmann, P. Clark, A. Sabharwal, M. Bansal,
+and T. Khot, “Adapt: As-needed decomposition and planning with
+language models,” inFindings of the Association for Computational
+Linguistics: NAACL 2024, 2024, pp. 4226–4252.
+[19] Y . Zhu, X. Wang, J. Chen, S. Qiao, Y . Ou, Y . Yao, S. Deng, H. Chen,
+and N. Zhang, “Llms for knowledge graph construction and reasoning:
+Recent capabilities and future opportunities,”World Wide Web, vol. 27,
+no. 5, p. 58, 2024.
+[20] J. Nie, X. Hou, W. Song, X. Wang, X. Zhang, X. Jin, S. Zhang, and
+J. Shi, “Knowledge graph efficient construction: Embedding chain-of-
+thought into llms,”Proceedings of the VLDB Endowment. ISSN, vol.
+2150, p. 8097, 2024.
+[21] A. B. Kahn, “Topological sorting of large networks,”Communications
+of the ACM, vol. 5, no. 11, pp. 558–562, 1962.
+[22] A. Cou ¨etoux, J.-B. Hoock, N. Sokolovska, O. Teytaud, and N. Bonnard,
+“Continuous upper confidence trees,” inInternational conference on
+learning and intelligent optimization. Springer, 2011, pp. 433–445.
+[23] OpenAI, “GPT-5 system card,” OpenAI, Tech. Rep., August 2025.
+[Online]. Available: https://cdn.openai.com/gpt-5-system-card.pdf
+[24] Anthropic, “System card: Claude Opus 4 & Claude Sonnet 4,”
+Anthropic, Tech. Rep., May 2025. [Online]. Available: https://www-cdn.
+anthropic.com/4263b940cabb546aa0e3283f35b686f4f3b2ff47.pdf
+[25] G. Comanici, E. Bieber, M. Schaekermannet al., “Gemini 2.5: Pushing
+the frontier with advanced reasoning, multimodality, long context, and
+next generation agentic capabilities,”arXiv preprint arXiv:2507.06261,
+2025.
+[26] A. Dubey, A. Jauhri, A. Pandeyet al., “The llama 3 herd of models,”
+arXiv preprint arXiv:2407.21783, 2024.
+[27] A. Yanget al., “Qwen3 technical report,”arXiv preprint
+arXiv:2505.09388, 2025.
+[28] LG AI Research, “Exaone 4.0: Unified large language models integrating
+non-reasoning and reasoning modes,”arXiv preprint arXiv:2507.11407,
+2025.
+[29] G. Team, “Gemma 3,” 2025. [Online]. Available: https://goo.gle/
+Gemma3Report
+[30] M. AI, “Llama guard 3: Llama-3 checkpoints for safety,” 2024. [Online].
+Available: https://ai.meta.com/research/publications/llama-guard-3/
+[31] Microsoft, “Azure ai content safety documentation,” 2024.
+[Online]. Available: https://learn.microsoft.com/en-us/azure/ai-services/
+content-safety/

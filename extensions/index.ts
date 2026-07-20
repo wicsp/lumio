@@ -35,7 +35,6 @@ import oracleExtension from "./knowledge/oracle";
 import reviewExtension from "./review/review";
 import triageCommentsExtension from "./review/triage-comments";
 import questionnaireExtension from "./ui/questionnaire";
-import todoExtension from "./todo/todo";
 import agentWorkflowAuditExtension from "./workflows/agent-workflow-audit";
 import atlasExtension from "./atlas/index";
 
@@ -68,7 +67,6 @@ export default function (pi: ExtensionAPI) {
 	reviewExtension(pi);
 	triageCommentsExtension(pi);
 	questionnaireExtension(pi);
-	todoExtension(pi);
 	agentWorkflowAuditExtension(pi);
 	atlasExtension(pi);
 

@@ -30,4 +30,4 @@
 
 ## 当前状态
 
-`extensions/index.ts` 目前注册 `/lumio` 状态命令、启动状态标记、Lumio permission gate、dirty repo guard、minimal footer，以及 quiet tools。`minimal-footer` 和 `quiet-tools` 已经本地化；其余从 `@diegopetrucci/pi-extensions` 迁入的功能已按用途打散到 `extensions/context/`、`extensions/knowledge/`、`extensions/review/` 等目录，后续应按个人使用习惯继续裁剪、合并或重写。
+`extensions/index.ts` 目前注册 `/lumio` 状态命令、Lumio permission gate、dirty repo guard、minimal footer、quiet tools，以及 Atlas RFC 0003 的 Source/Resource 执行与 Vortex 投影。`minimal-footer` 和 `quiet-tools` 已经本地化；其余从 `@diegopetrucci/pi-extensions` 迁入的功能已按用途打散到 `extensions/context/`、`extensions/knowledge/`、`extensions/review/` 等目录，后续应按个人使用习惯继续裁剪、合并或重写。通用 Todo extension 已删除；当前会话计划只由 Plan mode 管理，持久工作项以后由 Atlas WorkItem 管理。

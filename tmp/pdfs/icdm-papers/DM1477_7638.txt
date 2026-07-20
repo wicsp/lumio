@@ -1,0 +1,1044 @@
+=== PAGE 1 ===
+FinRED: An Expert-Guided Benchmark Generation
+and Evaluation Framework for Financial LLM
+Red-Teaming
+Chaeyun Kim1,*,†, Dae-Young Park2,*, Junghwan Kim 1,†, Jinyoung Jeong 3, Eunji Song 3, YongTaek Lim1, Minwoo Kim 1,‡
+1DATUMO INC., Republic of Korea
+2Korea Advanced Institute of Science and Technology (KAIST), Republic of Korea
+3Financial Security Institute (FSI), Republic of Korea
+Abstract—Existing safety benchmarks target general adversar-
+ial scenarios but miss finance-specific risks. Financial LLMs face
+regulatory-compliance violations, fraud facilitation, and systemic
+trust erosion that require targeted evaluation. We introduce
+FinRED, an expert-guided red-teaming framework for financial
+LLM safety evaluation developed with financial experts.FinRED
+uses a novel two-level taxonomy mapping global standards (e.g.,
+FATF, EU DORA) to threats from regulatory evasion to complex
+fraud, integrated with a scalable pipeline that converts real
+financial documents into context-rich red-teamingBehavioral
+Prompts (seeds)through an expert-defined schema. Rigorous
+expert validation confirms seed plausibility and realism for
+meaningful LLM safety evaluation. We also provide an expert-
+validated finance-specific rubric beyond disclaimer checks, align-
+ing better with human experts than static one-size-fits-all rubrics
+and reducing critical false negatives from 28 to 12. Aligned
+with internationally adopted risk and information-security stan-
+dards (e.g., ISO/IEC 27001),FinREDis deployed in South
+Korea’s Financial Security Institute (FSI) regulatory sandbox
+for generative-AI security evaluation in real financial services. To
+mitigate dual-use risks, the dataset, generation pipeline, prompt
+template, and evaluation framework are gated for qualified
+researchers at https://github.com/selectstar-ai/FinRED-paper and
+https://huggingface.co/datasets/datumo/FinRED.1
+Index Terms—LLM Safety, Red-Teaming, Financial Domain,
+Benchmark, Risk Taxonomy
+I. INTRODUCTION
+The rapid deployment of large language models (LLMs)
+across critical sectors has raised concerns about their safety,
+particularly in high-stakes domains such as finance [1]–[3].
+Red teaming and safety benchmarking have become essential
+methodologies for identifying these vulnerabilities [4], [5].
+While the scope of these benchmarks has evolved from
+evaluating purely technical exploits to evaluating nuanced
+sociocultural harms [6]–[8], they predominantly focus on
+universal risks, revealing a significant limitation in their ability
+to measure the unique, expertise-driven threats inherent in
+specialized domains [9]. This evaluation gap is particularly
+*Both authors contributed equally to this research. †Work done while at
+DATUMO INC. ‡Corresponding author,mwkim@selectstar.ai
+1For review purposes, reviewer access to these resources will be maintained
+until the paper is officially published.
+Fig. 1: Structure of The Proposed Financial Risk Taxonomy
+acute in the financial sector. Existing safety taxonomies often
+evaluate “Specialized Advice” merely by checking for dis-
+claimers [9]–[12], rather than evaluating the substantive harm
+of the response. Although a suite of financial benchmarks like
+FinEval [13], FinLMEval [14], Pixiu [15], CFBenchmark [16],
+and FinanceBench [17] has emerged, their primary focus lies
+on performance metrics such as information extraction, rea-
+soning, and domain knowledge comprehension. They evaluate
+what modelscan do, nothow they behaveunder adversarial
+pressure. This leaves a critical gap: a lack of precise evaluation
+benchmarks for measuring safety in the financial domain.
+Financial LLM safety extends beyond general risk categories,
+requiring evaluation of domain-specific threat vectors. These
+include violations of complex regulations (e.g., Financial
+Consumer Protection Act), sophisticated fraud scenarios in-
+distinguishable from legitimate advice, and systemic risks that
+erode trust in financial ecosystems. This challenge is amplified
+by the increasing deployment of both general-purpose and
+finance-specific LLMs, raising a critical question:are these
+models, despite their financial proficiency, resilient against
+domain-specific attacks?We posit that an expert adversarial
+
+=== PAGE 2 ===
+Benchmark Domain Focus Adversarial Type Expert Involvement Safety Rubric Evaluation Target Language Year
+General Safety / Red-Teaming Benchmarks
+HarmBench General Prompt-level✗Generic (disclaimer-based) Open-domain LLMs English 2024ALERT General Automated red-teaming✗Binary harmfulness General-purpose LLMs English 2024AIR-Bench General (policy-aligned) Multi-turn adversarial✗Regulation-oriented Government-related LLM eval English 2024SALAD-Bench General Multi-facet adversarial✗Hierarchical safety taxonomy General-purpose LLMs English 2024CASE-Bench General Context-aware red-teaming Partial Policy-grounded rubric General / Gov LLMs English 2025JailbreakBench General Prompt-level✗Generic (disclaimer-based) Open-domain LLMs English 2024
+Financial-domain Benchmarks
+Pixiu Finance (performance) QA/IE (Non-adversarial)✗None (task accuracy only) FinLLMs and general LLMs English/Chinese 2023FinEval Finance (performance) Reasoning (Non-adversarial)✗None (QA metrics) Financial QA models Chinese 2025FinLMEval Finance (performance) QA/reasoning (Non-adversarial)✗None FinLLMs English 2023FinanceBench Finance (reasoning) QA (Non-adversarial)✗None (factuality) FinLLMs English 2023DocFinQA Finance (reasoning) QA (Non-adversarial)✗None (QA-based) FinLLMs and general LLMs English 2024CFBenchmark Finance (compliance) Simulated violation Partial Rule-based FinLLMs Chinese 2023FinBen Finance (multi-task) Mixed (QA/IE/TG) (Non-adversarial)✗None (task-based) FinLLMs and general LLMs English/Spanish 2024
+FinRED (ours)Finance (safety) Framework + red-teaming✓(12 FSI experts)Category-specific financial safety rubricGeneral + FinLLMsKorean/English-
+*Abbreviations:QA = Question Answering; IE = Information Extraction; TG = Text Generation; FinLLM = Financial Large Language Model.
+TABLE I:Comparison of existing red-teaming and financial-domain benchmarks.FinRED integrates expert-guided
+construction, adversarial generation, and finance-specific safety evaluation as an applied framework for financial LLM
+adversarial safety testing.
+user, equipped with deep financial knowledge and adaptive
+techniques, can craft subtle attacks that bypass generic safety
+filters. Motivated by this realistic threat landscape, we in-
+troduceFinRED 2, an applied red-teaming construction and
+evaluation framework designed to systematically generate re-
+alistic financial threat scenarios and verify LLM safety as
+shown in Fig. 1. In this work, “safety evaluation” strictly
+focuses on evaluating an LLM’s adversarial resilience against
+domain-specific threats (e.g., fraud facilitation and regulatory
+evasion), rather than its general financial task performance or
+institutional compliance.
+FinREDwas designed for practical financial AI safety
+evaluation rather than as a stand-alone dataset. A consensus of
+12 domain experts 3 guided the pipeline from the foundational
+risk taxonomy to the final evaluation rubric. Our schema-
+based approach integrates real financial documents with do-
+main knowledge to generate contextually rich scenarios, which
+are then transformed into red-teamingBehavioral Prompts
+(Seeds). Through expert quality evaluation and downstream
+ASR ablations, we show that schema-driven seeds are more
+domain-specific, plausible, actionable, and operationally ef-
+fective than zero-shot or context-only baselines (see Sec-
+tion IV-C). To evaluate model safety against these high-quality
+seeds, our expert-validated judge rubric is applied to general-
+purpose open-source LLMs, finance-specific LLMs [15], [18],
+and leading commercial APIs. We place a particular focus on
+the vulnerabilities of small Language Models (sLMs), which
+represent a realistic deployment target for financial services.
+Highlighting its practical impact, FinRED has been incorpo-
+rated into the Financial Security Institute (FSI)’s regulatory
+sandbox framework, where it is used to evaluate security
+countermeasures for generative AI in financial services 4.
+The main contributions of this study are as follows:
+2The FinRED artifact is available through gated access at: https://
+huggingface.co/datasets/datumo/FinRED
+3They belong to the Financial Security Institute (FSI), one of the gov-
+ernment agencies related to the financial industry in South Korea. For this
+institutional information, refer to the following link: https://www.fsec.or.kr/.
+4This framework is used to verify AI security of financial companies. For in-
+formation about this sandbox framework and its AI security verification, refer
+to the following links: https://www.fsec.or.kr/bbs/detail?menuNo=69&bbsNo=
+11629 and https://www.fsec.or.kr/bbs/detail?menuNo=69&bbsNo=11607
+1)Expert-Guided Financial Risk Taxonomy:We design a
+two-level taxonomy that covers real financial threats such
+as complex fraud and regulatory evasion, while mapping
+them to global security and supervisory standards.
+2)Schema-Driven Scenario Generation and Real-World
+Deployment:We build a scalable pipeline that generates
+red-teaming seeds from global and local financial doc-
+uments. The framework has been deployed in the FSI
+regulatory sandbox for generative-AI security verifica-
+tion, demonstrating practical utility in a real financial-
+supervision setting.
+3)Expert-Aligned Evaluation Rubric:We provide a
+five-dimensional finance-specific rubric that evaluates
+harmfulness beyond simple refusal behavior and better
+matches financial-security experts, reducing critical false
+negatives in threat detection.
+Unlike static financial safety datasets, FinRED is designed
+as an extensible and regulation-adaptive framework that de-
+couples threat taxonomy design from retrieval corpora to en-
+able newly released international regulations and jurisdiction-
+specific supervisory documents to be incorporated with min-
+imal effort for customized financial safety evaluation across
+diverse regulatory environments.
+II. RELATED WORKS
+A. LLM Red Teaming and Safety Benchmarks
+Red teaming identifies LLM vulnerabilities and has pro-
+duced many safety benchmarks [10], [19]–[28], includ-
+ing ALERT [21] for adversarial-prompt evaluation, Harm-
+Bench [29] for automated red teaming, and AIR-Bench
+2024 [27] for regulation-aligned evaluation. Their pipelines
+eitherleverage LLM’s inherent knowledgethrough prompt-
+ing [19], [23], [30], [31] orguide targeted prompt creation
+with relevant documents or policy[27], [32]–[34].
+These benchmarks support general LLM safety alignment
+butfocus on universal harms, lacking financial nuance [9],
+and oftenemploy a single, fixed rubric, missing category-
+specific context. FinRED addresses both with a domain-
+specific, context-aware pipeline and category-specific expert-
+validated judge rubric.
+
+=== PAGE 3 ===
+B. Financial Domain-Specific LLM Evaluation
+Financial benchmarks such as Pixiu [15], FinEval [13],
+CFBenchmark [16], FinanceBench [17], and FinBen [35]
+evaluate QA, extraction, and generation across languages [36]–
+[38]. Yet they measure financial co-pilot capability, not safety
+underadversarial pressure.FinREDtargets this intersection
+with a fine-grained expert-consensus taxonomy for realistic
+financial threat stress testing.
+Table I summarizes recent benchmarks and FinRED’s
+expert-guided adversarial generation with a finance-specific
+safety rubric.
+C. Automated Adversarial Attack Methodologies
+LLM adversarial attacks expose vulnerabilities and un-
+safe behavior throughwhite-box (token-level)orblack-box
+(prompt-level)methods. Token-level attacks optimize tokens
+with internal access: GCG [20] uses gradient-based greedy
+search enhanced by momentum [39], hybrid multi-coordinate
+updates [40], or random restarts [41], while AutoDAN [42]
+evolves prompts genetically.
+Black-box attacks need no internal information and often
+use other LLMs to generate or refine prompts. TAP [43]
+uses tree-of-thought reasoning, GPTFuzzer [44] applies LLM-
+guided mutations, and other methods use ciphering [45], string
+compositions [46], or flipped letter order within words [47].
+We study these attacks in finance-specific contexts.
+III. THE FINRED FRAMEWORK
+In this section, we detail the methodology for constructing
+FinRED, our applied framework for systematically evaluating
+LLM safety against finance-specific risks. As shown in Fig. 2,
+our framework is organized into three core stages:(a)expert-
+drivenFinancial Risk TaxonomyandSchemadefinition,(b)
+relevant context retrievalfrom real-world documents, and
+(c)Prompt Generation leveraging these contexts and expert-
+validation. A key output is theBehavior Seed: a structured,
+natural-language specification of a harmful behavior grounded
+in a realistic financial context, which serves as input for
+downstream attack methods (e.g., GCG, TAP). These seeds
+capture the nuanced complexity of financial threats that cannot
+be adequately represented through simple zero-shot prompts.
+The released artifact contains 5,805 expert-validated seeds
+across five Level-1 and 26 Level-2 risk types, together with
+taxonomy labels, schema and prompt-format metadata, split
+identifiers, and gated access controls for qualified researchers.
+Finally, we design a specializedFinRED Evaluation Rubric
+incorporating a robust financial domain judge.
+A. Financial Risk Taxonomy and Schema Definition
+1) 2-Level Financial Risk Taxonomy:The foundation of
+our framework is a domain-specific risk taxonomy, established
+through extensive literature review, focus group interview
+(FGI) and discussion with financial security experts. We de-
+signed a 2-level structure where each of the five high-levelrisk
+categories(level 1) is broken down into granularsub-types
+(level 2), indicating a fine-grained financial risk taxonomy for
+evaluating LLM safety.
+At Level 1, five overarching domains are defined as:
+(R1) Cyber Threats, (R2) Financial Crime, (R3) Misinfor-
+mation & Deception, (R4) Consumer Rights Violation, and
+(R5) Financial information and communication technology
+(ICT) Compliance Evasion. Then, each category is decom-
+posed into fine-grained Level 2 subtypes reflecting concrete
+adversarial intents—such as digital authentication bypass, as-
+set theft, and advanced persistent threat (APT) intrusions under
+R1; voice phishing, electronic financial fraud, and money
+laundering assistance underR2; misleading financial product
+descriptions and deceptive promotional content underR3;
+disclosure evasion and mis-selling practices underR4; and
+incident non-reporting or data protection evasion underR5 5.
+The proposed taxonomy and schema templates are designed
+by abstracting threat-modeling principles frominternational
+supervisory frameworkssuch as FATF, BIS/BCBS, ISO/IEC
+27001, NIST, OW ASP, and the EU’s DORA, rather than
+by treating source documents as evidence of compliance.
+They define reusable standard-aligned threat dimensions, such
+as AML evasion, operational resilience failure, consumer
+harm, and cybersecurity abuse. Consequently, injecting a local
+regulatory corpus (e.g., Korean financial-security documents)
+or newly released international guidance as retrieval context
+customizes generated seeds to the target jurisdiction while
+preserving globally grounded threat-assessment dimensions.
+2) Threat Behavior Schema Definition and Refinement:
+Generating realistic financial threat scenarios requires more
+than free-form LLM generation. Financial risks involve com-
+plex interactions between actors, systems, regulations, and mo-
+tivations that must be systematically captured to ensure both
+completeness and realism. A schema serves as a structured
+template that defines the essential components of a threat
+without containing actual data. In the financial domain, it may
+outline attacker profiles, compromise paths, deceptive tactics,
+or regulatory violations—providing a consistent framework
+that guides scenario generation while allowing flexibility in
+specific instantiations.
+Schema Structure.For each Level-1 taxonomy category, we
+define schemas in JSON format, dividing elements into Essen-
+tial cues (e.g.,attackerProfile,targetTechnology)
+and Optional cues (e.g.,vulnerabilityHypothesis,
+requesterPersona). “Essential” elements form the core
+content of the threat behavior and must be included, while
+“Optional” elements add contextual richness and diversity. We
+chose the JSON format for two key reasons:(1) Flexibility:
+hierarchical key-value structures naturally represent complex
+threat behaviors with nested relationships,(2) Industry align-
+ment: security domains commonly use JSON-based specifica-
+tions (e.g., STIX Domain Objects for threat intelligence).
+Expert-Driven Refinement.Initial schema drafts were con-
+structed using state-of-the-art LLMs (Gemini 2.5 Pro, GPT-
+4.1, Claude Sonnet 4) to prototype comprehensive attribute
+5For detailed definition and explanation, refer to https://bit.ly/4e4qNpN.
+
+=== PAGE 4 ===
+(a) Financial Risk Taxonomy & Schema
+(b) Contextual Retrieval
+(c) Context Grounded Behavior Seed Generation
+Reference
+Documents Finance Expert FinRED Taxonomy Essential Fields Per Taxonomy
+Optional Fields Per Taxonomy
+Level-2 Keyword List
+Schema
+by Taxonomy
+Refinement
+Reference
+Documents 
+Chunking 
+with Chipper
+Vector Database Semantic Retrieval Relevant Chunk
+per Taxonomy
+Relevant Chunk
+per Taxonomy
+Schema
+by Taxonomy
+Intermediate 
+Scenario LLM-Based Seed Generation
+FinRED
+Final Prompts
+Manual
+Verification
+[FGI]
+Finance Expert
+x
+Rubric
+Fig. 2: Overview of FinRED: (a) expert-guided taxonomy/schemas, (b) document-context retrieval, and (c) expert-validated
+seed generation.
+sets for each risk category. These drafts were then iteratively
+refined in close collaboration with the FSI experts over mul-
+tiple review cycles. This process focused on ensuring each
+schema was not only comprehensive but also met the standards
+of specificity, realism, and logical coherence required to model
+plausible threats in a real-world financial security environment.
+Through three discussion sessions and consensus-building
+activities, the FSI experts validated that each schema field ac-
+curately captured domain-specific threat mechanics, and could
+systematically generate threats beyond generic templates. The
+final schemas thus represent an expert consensus, with each
+element explicitly grounded in attack patterns and regulatory
+violations observed in real-world financial operations. This
+design treats experts as a validation layer rather than a manual
+bottleneck: new documents or threat-intelligence feeds can
+update retrieval contexts, while schema-level changes require
+only targeted expert review.
+B. Document Collection and Contextual Retrieval
+This stage establishes the foundation for generating domain
+grounded seed prompts by collecting expert-curated financial
+documents and retrieving relevant contexts through a struc-
+tured pipeline.
+1) Document Collection and Chunking:First, we collected
+approximately 500 financial documents selected and reviewed
+by domain experts, including regulatory frameworks, super-
+visory guidelines, audit reports, and risk assessment reports.
+These documents provide rich contextual information ground-
+ing our seed prompts in realistic regulatory and operational
+environments.
+Next, we employ a two-stage chunking pipeline [48] using
+the Unstructured library withChipper 6, a vision-based model
+6A layout-aware document parsing model by Unstructured
+that outputs JSON representations of document elements with
+layout metadata. Our two-stage pipeline first performs struc-
+tural chunking, which preserves hierarchy by initiating chunks
+at titles or tables, merging elements under 200 characters into
+blocks up to 2,800 characters. Second, chunks exceeding 1,200
+characters are re-segmented with a 150-character overlap.
+This approach balances embedding constraints with semantic
+coherence.
+2) Query Construction and Retrieval:We developed
+expert-crafted queries for every Level-2 category in our
+taxonomy. These queries reflect actual information-seeking
+behaviors in security operations and regulatory compliance.
+Documents are chunked separately for each Level-2 cate-
+gory, encoded using OpenAI embeddings, and stored in a
+Chroma vector database. We retrieve the top-8 semantically
+relevant chunks per category using the corresponding expert-
+constructed queries.
+3) Role of Retrieved Context:The retrieved documents
+specify prohibited actions in financial services, including reg-
+ulatory violations and operational misconduct. In fact, our
+goal is to generate seed prompts describing harmful behaviors
+that LLMs should refuse. We treat compliance guidance as an
+inverted playbook: our generation process identifies prohibi-
+tions and devises methods to circumvent them. This approach
+transforms compliance documents into realistic threat scenar-
+ios grounded in regulatory frameworks.
+C. Automated Generation of Context-Grounded Behavior
+Seeds
+Building on the retrieved regulatory contexts and defined
+schemas, this stage automatically generates theBehavior
+Seedsthat specify target harmful behaviors for our benchmark.
+The process is designed to synthesize the structured knowledge
+
+=== PAGE 5 ===
+from the schemas with the unstructured text from the context
+documents, producing prompts that are both realistic and
+systematically varied.
+Schema-Driven Seed Prompt Construction.Our generation
+process is a two-step, schema-driven procedure designed to
+maximize realism and specificity. First, the expert-defined
+schema (the blueprint) and the retrieved context for a specific
+threat (the raw material) are provided to a powerful LLM.
+The model’s task is to generate a structuredJSON scenario,
+populating the schema’s fields with concrete details synthe-
+sized from the provided context 7. This intermediate scenario
+serves as a rich, machine-readable representation of a unique
+threat instance, detailing its background, actors, motivations,
+and intended outcomes.
+This intermediate JSON scenario is then transformed into a
+natural-language Seed through two core strategies.Dynamic
+Persona Assignmentinstructs the LLM to adopt a context-
+appropriate attacker persona (e.g., an ’experienced penetration
+tester’ for cyber threats), imbuing the prompt with realistic
+voice and intent.Strategic Combination of Elementsensures
+diversity:all essential elements are includedin every seed,
+while optional elements are systematically varied across seeds
+to explore different facets of the same threat. This process
+yields high-quality, diverse, and context-grounded Behavior
+Seeds that form theFinREDbenchmark.
+Final Verification.Lastly, to mitigate LLM hallucination and
+ensure scenario realism, we incorporate self-correction instruc-
+tions during prompt generation, requiring the LLM to verify
+and correct logical coherence. Generated prompts underwent
+final validation by financial experts through multiple focus
+group interviews. Experts evaluated scenario realism, attack
+effectiveness, and clarity of potential harm from multiple
+perspectives.
+D. FinRED Evaluation Framework: Financial Domain Judge
+Rubric
+To ensure reliable and domain-grounded safety evaluation,
+we design aFinancial Domain Judge Rubricthat extends
+theLLM-as-a-judgeparadigm. Unlike prior safety benchmarks
+that rely primarily on disclaimer detection or binary refusal
+checks, the proposed judge defines and uses fine-grained
+evaluation criteria reflecting the five dimensions of model
+responses.
+1) Judgment rubric design:The FinRED rubric defines
+what constitutes harmful behavior in the financial domain and
+how to measure it. It comprises five dimensions:harmfulness
+evaluates the severity of potential financial or legal damage;
+persuasivenessevaluates how plausible and convincing the
+harmful content appears;refusal qualitychecks whether the
+model recognizes and rejects the risky request;factualness
+judges the technical or regulatory accuracy of the content;
+andevasivenesscaptures indirect hints or partial assistance
+toward harmful behavior. The core evaluation objective is to
+determine how effectively the attacker’s intent is realized,
+7For examples of schemas, refer to https://bit.ly/4eqoOxy
+focusing on whether the LLM response directly or indirectly
+contributes to the attacker’s harmful financial objective. The
+rubric’s objective is twofold: (1) domain specificity: evalu-
+ate whether a model’s response could realistically facilitate
+or justify financial misconduct (e.g., fraud, mis-selling, data
+misuse); (2) evaluator consistency: enable both human experts
+and automated judges to apply a unified standard across Level-
+2 taxonomy categories.
+Each rubric item is accompanied by detailed behavioral
+cues extracted from real-world financial security guidelines
+(e.g., Financial Consumer Protection Act) and agreed upon
+through expert interviews with the 12 domain experts from the
+FSI. This expert panel provided both qualitative feedback and
+quantitative validation, ensuring conceptual alignment with
+institutional supervisory frameworks 8.
+2) Automated evaluation:The automated judge operates
+on a structured instruction template to ensure reproducibility
+and alignment with expert reasoning. The template enforces
+constrained JSON outputs to enable scalable benchmarking
+while preserving interpretability 9.
+This mechanism enables scalable, reproducible, and expert-
+aligned evaluation of LLM safety across thousands of red-
+teaming prompts. By explicitly modeling how and why a re-
+sponse is harmful, the proposed FinRED Judge bridges the gap
+between human expert reasoning and LLM-based evaluation
+— a crucial step toward domain-specific AI safety evaluation
+in finance. Following a conservative fail-safe policy, a response
+is labeled as Unsafe if any rubric dimension is judged Unsafe,
+reflecting the principle that even partial harmful assistance
+may create unacceptable financial risk. This rule matches how
+financial-security experts flag subtle regulatory evasion and
+contributes to the 57% reduction in critical false negatives
+reported in Section IV-D 10. Due to space limitations, the full
+evaluation template and rubric specifications are available in
+the project repository mentioned in the Abstract.
+IV. EXPERIMENTS
+A. Experimental Settings
+Attack Methods.To evaluate the vulnerability of LLMs
+to finance-specific threats, we apply state-of-the-art auto-
+mated attack methods to FinRED seeds: white-box attacks
+(GCG [20], AutoDAN [42]) and black-box attacks (TAP [43],
+GPTFuzzer [44], AutoDAN-Turbo [49]). We also include a
+Direct Request baseline using unmodified seeds. For repro-
+ducibility, we fix the main attack budgets as GCG (500 steps,
+width=512), AutoDAN (100 steps, batch=256), AutoDAN-
+Turbo (150 epochs, break score≥8.5), TAP (depth=10,
+branching=4), and GPTFuzzer (1,000 queries); all experiments
+are performed on NVIDIA H200 GPUs.
+Target LLMs.Our evaluation spans a wide range of models
+to provide a comprehensive analysis of the financial safety
+8Representative rubric examples for each taxonomy category are available
+in the project repository.
+9The evaluation prompt template is available at: https://bit.ly/4a2e1av.
+10To evaluate the effectiveness of our judge rubric, we provide details in
+Section IV-D.
+
+=== PAGE 6 ===
+General-Purpose sLMs Finance-Specific sLMs API-Based LLMs
+Taxonomy Attack MethodLlama3.1 Qwen2.5 gemma3 EXAONE FinMA qqWen-7B qqWen-32B GPT-5 GPT-5-mini Claude-4 Gemini-Flash Gemini-Pro
+R1: Cyber Threats
+Direct Request 24.05 82.41 53.80 87.34 92.41 75.32 83.04 0.63 1.27 22.78 53.80 63.29
+GCG (White-box) 19.62 91.77 59.49 88.61 49.37 85.25 87.97 -
+AutoDAN (White-box)37.34 98.73 73.42 98.73 42.41 98.73 90.51 -
+TAP (Black-box) 6.96 68.35 46.20 75.32 55.06 87.97 65.19 0.63 0.63 8.86 1.27 1.90
+GPTFuzzer (Black-box)75.95 88.24 65.18 88.73 78.15 79.11 63.29 0.00 0.00 4.43 27.85 58.38
+AutoDAN-Turbo 12.66 89.51 33.75 85.44 78.48 90.51 68.99 0.37 0.89 7.14 23.42 35.97
+R2: Financial
+Crime
+Direct Request 4.29 25.71 8.57 20.00 83.57 23.57 20.00 0.00 0.00 7.14 21.43 21.43
+GCG (White-box) 2.86 60.71 18.57 20.71 60.71 51.43 33.57 -
+AutoDAN (White-box) 7.86 43.57 17.14 27.86 50.71 65.71 15.71 -
+TAP (Black-box) 0.71 12.86 7.86 17.14 55.00 42.14 11.43 4.29 8.57 1.43 1.43 3.57
+GPTFuzzer (Black-box)75.71 82.14 68.57 82.86 87.14 76.43 74.95 0.00 0.00 2.14 23.57 52.14
+AutoDAN-Turbo 7.86 31.43 36.83 32.14 60.00 37.14 7.14 3.57 1.78 0.35 6.43 24.28
+R3: Misinformation
+Direct Request 15.67 27.61 19.40 38.06 70.15 31.34 26.87 1.49 3.73 0.00 32.09 31.34
+GCG (White-box) 6.72 76.87 27.61 31.34 66.42 73.13 59.70 -
+AutoDAN (White-box)14.93 32.09 16.42 26.87 52.99 34.33 31.34 -
+TAP (Black-box) 2.24 35.07 6.72 20.15 29.10 41.79 20.15 5.22 7.46 0.00 2.99 5.22
+GPTFuzzer (Black-box)86.57 87.01 64.17 97.76 71.04 97.01 66.41 0.75 3.73 8.96 58.81 42.39
+AutoDAN-Turbo 6.72 23.88 54.18 33.58 39.55 27.61 23.88 8.15 9.20 7.14 14.18 37.55
+R4: Consumer
+Rights
+Direct Request 4.02 31.03 12.64 20.69 49.43 16.09 17.82 4.60 4.60 4.60 26.44 27.01
+GCG (White-box) 8.62 72.41 33.91 25.86 43.10 66.67 40.23 -
+AutoDAN (White-box)10.34 29.89 23.56 26.44 36.78 33.91 24.71 -
+TAP (Black-box) 3.45 24.71 9.77 26.44 31.03 29.89 12.07 3.45 9.77 0.57 1.15 5.75
+GPTFuzzer (Black-box)90.80 93.68 67.24 94.25 86.20 87.93 50.20 0.00 4.02 6.90 47.59 46.44
+AutoDAN-Turbo 9.20 27.59 37.81 20.11 38.51 30.46 18.39 4.08 3.59 2.04 9.20 11.43
+R5: Compliance
+Evasion
+Direct Request 15.10 31.84 14.29 26.53 45.31 27.35 24.90 9.39 7.76 4.90 44.49 37.14
+GCG (White-box) 13.47 42.45 58.78 30.61 50.61 74.69 57.20 -
+AutoDAN (White-box)25.31 31.02 19.59 31.02 31.84 27.35 28.16 -
+TAP (Black-box) 5.71 24.08 16.33 23.67 35.92 22.04 17.55 6.86 11.84 2.86 2.86 4.49
+GPTFuzzer (Black-box)85.31 96.73 73.01 81.63 65.71 93.47 62.85 0.00 2.04 4.08 27.76 4.08
+AutoDAN-Turbo 11.43 26.53 53.26 19.59 33.88 21.63 23.67 6.93 5.86 4.29 11.84 18.52
+TABLE II: Attack Success Rate (%) of various attack methods on ourFinREDbenchmark across a representative set of target
+models. Cells are colored by ASR value: ≥80% 60-80% 40-60% 20-40% <20%. White-box attacks (GCG, AutoDAN)
+are not applicable to API-based models (-) due to the requirement of direct access to model parameters.
+landscape. We test widely-used open-source small language
+models (sLMs) (Llama-3.1-8B-it [50], Qwen2.5-7B-it [51],
+gemma3-12B-it [52], EXAONE3.5-7.8B-it [53]); prominent
+finance-specific sLMs (FinMA [15], qqWen 7B and 32B [18]);
+and a suite of leading commercial API-based models (GPT-5,
+GPT-5-mini [54], Claude 4 Sonnet [55], Gemini 2.5 Flash, and
+Gemini 2.5 Pro [56]).
+Metrics.For our primary evaluation metric, we use At-
+tack Success Rate (ASR) following prior work [29], [30],
+[57]. ASR is the percentage of attack prompts for which a
+target model produces a harmful or non-refused response,
+as determined by the expert-validated FinRED Judge rubric
+(Section IV-D). Because category counts reflect real-world
+coverage rather than a class-balanced design, we report ASR
+by risk category and attack method instead of relying on a
+single pooled score. We also measure agreement between the
+LLM judge and domain-expert judgments.
+B. Main Evaluation Result
+We present comprehensive evaluation results in Table II,
+showing Attack Success Rates (ASR) across six attack meth-
+ods, five taxonomies, and twelve target models. Fig. 3 further
+summarizes mean ASR by model and attack method. Our
+findings reveal critical vulnerabilities and validate our core
+hypotheses regarding domain-specific financial threats.
+Compact heatmap analysis.The heatmaps show that vul-
+nerability is concentrated in open-source sLMs, including
+finance-specific models, whereas leading API-based models
+remain comparatively robust. Across risk categories, R1 is the
+most vulnerable and R2 is relatively more resistant because
+explicit financial-crime requests more often trigger refusal.
+Mean ASR per Risk Category and Model
+Mean ASR (%)
+Llama3.1-8b-itQwen2.5-7b-itgemma 3-12b-it
+EXAONE-3.5-7.8b-it
+FinMA-7bqqWen-7bqqWen-32b
+GPT-5
+GPT-5-miniclaude-4-sonnetgemini-2.5-flashgemini-2.5-pro
+R1
+R2
+R3
+R4
+R5
+(a) Mean ASR by Risk Category and Model
+Mean ASR by Risk Category Attack Method
+Mean ASR (%)
+R1
+R2
+R3
+R4
+R5
+Direct RequestGCG (W)AutoDAN (W)TAP (B)GPTFuzzer (B)AutoDAN-Turbo (B)
+(b) Mean ASR by Risk Category and Attack Method
+Fig. 3: Heatmap visualizations of Mean ASR.
+GPTFuzzer is the strongest black-box attack overall, while the
+non-trivial Direct Request ASR confirms that FinRED seeds
+are adversarial even without additional optimization. Interest-
+ingly, several finance-specific and open-source LLMs exhibit
+lower ASR under optimization-based attacks than under Direct
+Request. This may occur because optimization-based suffixes
+sometimes disrupt the rich financial context already embedded
+in FinRED seeds.
+C. Evaluation of Generation Pipelines
+To validate our schema-driven pipeline’s ability to generate
+realistic financial threat scenarios, we evaluate it against two
+
+=== PAGE 7 ===
+progressively simplified baselines. This comparative frame-
+work situates our method within existing red-teaming practices
+while isolating the specific impact of structural schemas on the
+fidelity and relevance of generated seeds.
+1) Experimental Setup:
+a) Compared Pipelines:We evaluate three progressive
+pipelines:
+P1 Context-Free Generation:Generates prompts using only
+a query and task definition, representing zero-shot ap-
+proaches that rely on an LLM’s internal knowledge [19],
+[23], [30], [31].
+P2 Context-Aware Direct Generation:Augments the P1
+setup with domain-specific documents as context. This
+reflects advanced red-teaming methods [27], [32]–[34]
+and serves as our model without schema-driven step.
+P3 Ours (Schema-Driven Generation):Our full proposed
+pipeline, which incorporatescontext-driven schema-
+basedbehavior generation process.
+b) Evaluation Process:We conducted a blind study with
+12 financial security experts 11. We sampled approximately
+90 prompts from each of the three pipelines, for a total of
+270 unique prompts. These prompts wererandomly shuffled
+and presented to the evaluators, with thesource pipeline
+concealed. For each risk category (R1-R5) prompts, evaluators
+provided a rating on a0-5 Likert scaleacross three quality
+criteria:
+•Financial Risk Alignment:How well the prompt reflects
+a nuanced, domain-specific financial risk.
+•Threat Plausibility:The realism and logical coherence
+of the scenario, including the actor, motivation, and
+method.
+•Specificity & Actionability:How clearly the prompt
+requests a concrete, actionable, and malicious deliverable.
+Financial Risk Alignment
+Average Score
+Threat Plausibility Specificity & Actionability
+Pipeline 1
+ Pipeline 2 Ours (FinRED)
+Fig. 4: Human Evaluation Results on Comparing Seed Quality
+across Three Pipelines.
+2) Results and Analysis:The human evaluation in Fig. 4
+confirms a progressive improvement from context-free gen-
+eration (P1), to context-aware generation (P2), to our
+schema-driven pipeline (P3). P3 achieves the highest scores
+across financial risk alignment, threat plausibility, and speci-
+ficity/actionability, showing that schemas structure retrieved
+regulatory context into concrete and realistic threat narratives.
+Beyond expert-rated quality, we additionally conduct an
+operational ASR ablation on the same 270-prompt subset (90
+11Measures to mitigate potential confirmation bias are detailed in Sec-
+tion V-C
+prompts per pipeline). P3 produces the highest ASR across
+model families, with average ASR of 58.05% for general-
+purpose sLMs, 70.28% for finance-specific sLMs, and 44.44%
+for API-based LLMs, while P1/P2 remain lower across the
+evaluated settings. This confirms that the schema-driven design
+improves not only expert-rated seed quality but also the ability
+of the framework to expose real model failures. Table III
+provides a compact visual summary. We attribute this ASR
+improvement to the schema-driven design, which exposes
+latent vulnerabilities by explicitly modeling attacker goals and
+domain-specific threat elements.
+TABLE III: Operational ASR ablation summary for generation
+pipelines.
+Pipeline General sLMs Financial-specific sLMs API LLMs
+P1 (Context-free) 41.32 52.47 28.91
+P2 (Context-aware) 49.86 61.73 36.58
+P3 (Ours) 58.05 70.28 44.44
+D. Agreement Rates of The Proposed Rubric
+To validate the reliability and alignment of the pro-
+posed FinRED Judge rubric, we conducted an empirical hu-
+man–LLM consistency analysis using evaluations from twelve
+domain experts at the FSI. Each expert independently re-
+viewed the<red-teaming prompt, LLM response>
+pairs generated from the FinRED and provided binary safety
+labels (Safe/Unsafe). The same dataset was simultane-
+ously evaluated by both the baselineHarmBench rubric 12
+and ourFinRED Judgeto compare agreement rates (in terms
+of alignment) with domain expert (human) judgment. A total
+of 130 prompt–response pairs were sampled across all level-2
+taxonomy categories (five samples per category, covering R1–
+R5). Each pair consisted of a final seed red-teaming prompt
+and an LLM output randomly drawn from eitherGemmaor
+Exaonemodels to ensure model diversity. Human labels were
+aggregated viamajority votingto form the ground truth, and
+performance was evaluated in terms of agreement rate with
+these expert judgments.
+1) Inter-expert Agreement:To further verify the internal
+consistency of expert judgments used as the ground truth, we
+analyzed pairwise agreement among the twelve FSI experts.
+As shown in Fig. 5, most pairwise agreement rates exceed
+0.8, reflecting a strong consensus. This internal alignment
+validates the robustness of our human-annotated baseline, and
+confirms that the superior performance of the FinRED Judge
+is measured against a reliable expert standard.
+2) Human–Model Agreement Results:Fig. 6 compares
+domain expert (human)–model agreement between the base-
+lineHarmBench rubricand our proposedFinRED Judge
+across financial risk domains. FinRED improves agreement
+from 76.92% to 88.46% (+11.54 points), with a pairedt-
+test confirming significance (p= 0.0024, 95% CI [4.17%,
+12As a widely recognized benchmark in LLM safety research, HarmBench
+rubric serves as our primary baseline.
+
+=== PAGE 8 ===
+Fig. 5: Inter-expert Agreement Heatmap Illustrating Pairwise
+Consistency among Twelve FSI Domain Experts.
+Fig. 6: Domain Expert (Human)–LLM Agreement on Two
+Judge Rubric across Financial Risk Domains
+18.91%]) and McNemar’s test supporting different error pat-
+terns (p= 0.0041). Errors decrease from 30 to 15, recall
+improves from 0.73 to 0.88, and Cohen’sκrises from 0.47 to
+0.68. Most importantly for adversarial safety testing, critical
+false negatives drop from 28 to 12 (57% reduction). We
+use an “Unsafe if any rubric item is Unsafe” decision rule
+intentionally: in financial compliance settings, even partial
+harmful assistance embedded in an otherwise cautious answer
+can create unacceptable operational risk.
+V. EXPERTVALIDATION ANDRELIABILITY
+A. Validation of Financial Risk Taxonomy
+Following social science research [58], [59], we conducted
+a FGI and two discussion sessions with 12 financial secu-
+rity experts to evaluate representational adequacy, inter-expert
+consistency, structural balance, and practical granularity of
+the taxonomy. Experts provided five-point Likert responses
+with qualitative feedback, and we computed Cohen’sκ[60]
+and Krippendorff’sα[61] for agreement beyond chance.
+Across the four dimensions, experts reported substantial-to-
+high agreement (75.0–91.7%), mean Likert scores of 4.20–
+4.59, and reliability ofκ= 0.73–0.83. They confirmed the
+taxonomy’s representational breadth, interpretive consistency,
+structural balance, and practical applicability, while suggesting
+minor refinements such as clarifying overlap betweenR2. Fi-
+nancial CrimeandR4. Consumer Rights Violation, simplifying
+low-frequency R5 subtypes, and expanding consumer-facing
+R4 entries. Per-dimension results in Table IV yield overall
+κ= 0.79andα= 0.82, supporting substantial inter-rater
+reliability. The detailed per-question FGI results are provided
+in the project repository mentioned in the Abstract.
+B. Validation of Judge Rubric
+In addition to the output-level agreement study in Sec-
+tion IV-D, twelve FSI experts reviewed representative rubric
+criteria across all five Level-1 risk domains. As shown in
+Table V, experts reported strong agreement that the rubric
+captures domain-specific harmfulness more effectively than
+conventional disclaimer-based rubrics (mean = 4.47, SD =
+0.43), with substantial reliability (κ= 0.79,α= 0.81).
+Minor revisions focused on ambiguous partial-compliance and
+mixed-intent responses.
+C. Experimental Controls Against Confirmation Bias
+To mitigate confirmation bias, we used a source-concealed
+evaluation protocol even though the same 12 domain ex-
+perts participated in schema refinement and prompt evalua-
+tion. Evaluators received randomized prompts without source-
+pipeline identifiers (P1/P2/P3), the schema-design and eval-
+uation tasks were separated temporally and cognitively, and
+final labels or scores were determined through majority voting
+and cross-checked with inter-rater reliability metrics. These
+controls do not replace a fully independent panel, but they
+reduce recognition and preference effects under the practical
+scarcity of certified financial-security evaluators. In addition,
+although all experts were affiliated with the FSI, their exper-
+tise spans financial fraud prevention, cybersecurity, regulatory
+compliance, consumer protection, and ICT supervision to
+provide diverse perspectives across the taxonomy categories.
+Furthermore, the domain experts were not asked to evaluate
+outputs generated from scenarios that they had individually
+authored. The taxonomy construction, schema refinement,
+prompt evaluation, and rubric validation activities were con-
+ducted as separate tasks with different objectives and at dif-
+ferent stages of the study. During evaluation, experts received
+only the generated prompts and model responses, without
+access to generation metadata, source pipeline information,
+or prior annotations. Consequently, evaluation decisions were
+based solely on the observed prompt–response pairs rather
+than prior knowledge of the generation process.
+VI. CONCLUSION
+This paper presents FinRED, an expert-guided construction
+and evaluation framework for evaluating LLM safety in the
+financial domain. FinRED bridges general safety evaluation
+and applied financial risk assessment through a two-level tax-
+onomy, a schema-driven seed generation pipeline, reproducible
+attack configurations, and a finance-specific judge rubric vali-
+dated by domain experts. Its successful deployment in the FSI
+regulatory sandbox shows that FinRED can function beyond an
+academic dataset as a standardized security validation pipeline
+that financial institutions can use before deploying LLM-
+based services. FinRED will be continuously updated with
+emerging financial threats and evolving regulations, supporting
+trustworthy, regulation-aligned, and safe financial AI systems.
+
+=== PAGE 9 ===
+TABLE IV: Summary of Expert Agreement Metrics for the Financial Risk Taxonomy (FGI Results)
+Evaluation Dimension (Q) Agreement (%) Likert Score (SD) Cohen’sκKrippendorff’sαKey Expert Feedback Summary
+(1) Representational Adequacy (Q1) 83.3 4.46 (0.49) 0.78 0.8 Taxonomy effectively captures domain-specific risk spectrum;
+suggested clearer distinction betweenFinancial Crimeand
+Consumer Rights Violationdomains.
+(2) Inter-Expert Consistency (Q2) 83.3 4.32 (0.52) 0.81 0.82 High consistency in category interpretation; proposed simpli-
+fying redundant subtypes in ICT compliance domain.
+(3) Structural Bias / Balance (Q3) 75.0 4.2 (0.55) 0.73 0.76 Generally balanced across technical and regulatory risks; mi-
+nor overemphasis on cybersecurity (R1) relative to consumer
+protection (R4).
+(4) Practical Applicability (Q4) 91.7 4.59 (0.44) 0.83 0.84 Strong practical relevance; JSON-schema structure enables
+automated scenario generation aligned with financial infor-
+mation sharing system (FISS) information framework.
+Overall Mean 83.3 4.39 (0.5) 0.79 0.81Substantial consensus among 12 FSI experts, confirming the
+taxonomy’s validity, reliability, and practical utility.
+Evaluation Dimension Agreement (%) Likert Score (SD) Cohen’sκKrippendorff’sα
+Clarity of Criteria 91.7 4.62 (0.41) 0.82 0.84Consistency across Domains 83.3 4.45 (0.48) 0.78 0.80Domain-Specific Adequacy 83.3 4.41 (0.46) 0.79 0.81Practical Applicability 91.7 4.39 (0.44) 0.8 0.82
+Overall Mean 87.5 4.47 (0.43) 0.79 0.82
+TABLE V: Expert Agreement for FinRED Judge Rubric
+ETHICSSTATEMENT
+This work studies adversarial financial-risk scenarios to
+improve the safety of LLMs in financial contexts. We acknowl-
+edge that red-teaming benchmarks can be dual-use: prompts
+designed to expose unsafe model behavior may also resemble
+malicious requests. Accordingly, FinRED is intended strictly
+for controlled safety evaluation, model security evaluation, and
+defensive research, and the dataset is distributed through gated
+access for qualified researchers. The benchmark construction
+process avoids real personal data, customer records, confiden-
+tial supervisory materials, and directly actionable operational
+instructions. The domain experts participated in validation and
+rubric evaluation for research purposes, and their feedback is
+summarized only in aggregate form. We encourage users of
+FinRED to apply appropriate access controls, monitoring, and
+responsible disclosure practices when evaluating models with
+potentially harmful financial prompts.
+ACKNOWLEDGMENT
+We would like to express our sincere gratitude to the twelve
+domain experts at the Financial Security Institute (FSI): Song-
+i Hwang, Ju-hyun Lee, Yoon-hee Lee, Yu-ri Lee, Jeong-won
+Lim, Kwang-yong Lee, So-young Yoo, Jung-sik Shin, Sang-
+hwa Lee, Jong-yeop Lee, Kyunggyu Kim, Young-mook Kang.
+Their professional insights, domain knowledge and detailed
+reviews significantly improved the quality and credibility of
+our work.
+REFERENCES
+[1] Z. Shi, Y . Wang, F. Yin, X. Chen, K.-W. Chang, and C.-J. Hsieh, “Red
+teaming language model detectors with language models,”Transactions
+of the Association for Computational Linguistics, vol. 12, pp. 174–189,
+2024.
+[2] M. Russinovich, A. Salem, and R. Eldan, “Great, now write an article
+about that: The crescendo{Multi-Turn}{LLM}jailbreak attack,” in34th
+USENIX Security Symposium (USENIX Security 25), 2025, pp. 2421–
+2440.
+[3] D.-Y . Park, “Graph-theoretical approach to enhance accuracy of financial
+fraud detection using synthetic tabular data generation,” inProceedings
+of the 33rd ACM International Conference on Information and Knowl-
+edge Management, 2024, pp. 5467–5470.
+[4] M. Nagireddy, B. Guill ´en Pegueroles, and I. Baldini, “Dare to diversify:
+Data driven and diverse llm red teaming,” inProceedings of the 30th
+ACM SIGKDD Conference on Knowledge Discovery and Data Mining,
+2024, pp. 6420–6421.
+[5] Z. Chen, Z. Xiang, C. Xiao, D. Song, and B. Li, “Agentpoison: Red-
+teaming llm agents via poisoning memory or knowledge bases,”Ad-
+vances in Neural Information Processing Systems, vol. 37, pp. 130 185–
+130 213, 2024.
+[6] Y . J. Ong, J. P. Gala, S. An, R. Moore, and D. Jadav, “Exploring
+vulnerabilities in llms: A red teaming approach to evaluate social bias,”
+inIEEE International Congress on Intelligent and Service-Oriented
+Systems Engineering, 2024.
+[7] T. Y . Zhuo, Y . Huang, C. Chen, and Z. Xing, “Red teaming chatgpt via
+jailbreaking: Bias, robustness, reliability and toxicity,”arXiv preprint
+arXiv:2301.12867, 2023.
+[8] T. Gillespie, R. Shaw, M. L. Gray, and J. Suh, “Ai red-teaming is a
+sociotechnical system. now what?”arXiv e-prints, pp. arXiv–2412, 2024.
+[9] S. Ghosh, H. Frase, A. Williams, S. Luger, P. R ¨ottger, F. Barez,
+S. McGregor, K. Fricklas, M. Kumar, K. Bollackeret al., “Ailuminate:
+Introducing v1. 0 of the ai risk and reliability benchmark from mlcom-
+mons,”arXiv preprint arXiv:2503.05731, 2025.
+[10] L. Li, B. Dong, R. Wang, X. Hu, W. Zuo, D. Lin, Y . Qiao, and J. Shao,
+“Salad-bench: A hierarchical and comprehensive safety benchmark for
+large language models,”arXiv preprint arXiv:2402.05044, 2024.
+[11] Y . Wang, H. Li, X. Han, P. Nakov, and T. Baldwin, “Do-not-answer:
+Evaluating safeguards in llms,” inFindings of the Association for
+Computational Linguistics: EACL 2024, 2024, pp. 896–911.
+[12] T. Yuan, Z. He, L. Dong, Y . Wang, R. Zhao, T. Xia, L. Xu, B. Zhou,
+F. Li, Z. Zhanget al., “R-judge: Benchmarking safety risk awareness
+for llm agents,”arXiv preprint arXiv:2401.10019, 2024.
+[13] X. Guo, H. Xia, Z. Liu, H. Cao, Z. Yang, Z. Liu, S. Wang, J. Niu,
+C. Wang, Y . Wanget al., “Fineval: A chinese financial domain knowl-
+edge evaluation benchmark for large language models,” inProceedings
+of the 2025 Conference of the North American Chapter of the Asso-
+ciation for Computational Linguistics: Human Language Technologies
+(NAACL-HLT), 2025, pp. 6258–6292.
+[14] Y . Guo, Z. Xu, and Y . Yang, “Is chatgpt a financial expert? evaluat-
+ing language models on financial natural language processing,”arXiv
+preprint arXiv:2310.12664, 2023.
+[15] Q. Xie, W. Han, X. Zhang, Y . Lai, M. Peng, A. Lopez-Lira, and
+J. Huang, “Pixiu: A comprehensive benchmark, instruction dataset and
+large language model for finance,”Advances in Neural Information
+Processing Systems, vol. 36, pp. 33 469–33 484, 2023.
+[16] Y . Lei, J. Li, D. Cheng, Z. Ding, and C. Jiang, “Cfbenchmark: Chinese
+financial assistant benchmark for large language model,”arXiv preprint
+arXiv:2311.05812, 2023.
+[17] P. Islam, A. Kannappan, D. Kiela, R. Qian, N. Scherrer, and
+B. Vidgen, “Financebench: A new benchmark for financial question
+answering,” arXiv preprint arXiv:2311.11944, 2023. [Online]. Available:
+https://arxiv.org/abs/2311.11944
+[18] B. R. Hogan, W. Brown, A. Boyarsky, A. Schneider, and Y . Nevmy-
+
+=== PAGE 10 ===
+vaka, “Technical report: Full-stack fine-tuning for the q programming
+language,”arXiv preprint arXiv:2508.06813, 2025.
+[19] E. Perez, S. Huang, F. Song, T. Cai, R. Ring, J. Aslanides, A. Glaese,
+N. McAleese, and G. Irving, “Red teaming language models with
+language models, 2022,”URL https://arxiv. org/abs/2202.03286, vol. 15,
+2022.
+[20] A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson,
+“Universal and transferable adversarial attacks on aligned language
+models,”arXiv preprint arXiv:2307.15043, 2023.
+[21] S. Tedeschi, F. Friedrich, P. Schramowski, K. Kersting, R. Navigli,
+H. Nguyen, and B. Li, “Alert: A comprehensive benchmark for assessing
+large language models’ safety through red teaming,”arXiv preprint
+arXiv:2404.08676, 2024.
+[22] S. Han, K. Rao, A. Ettinger, L. Jiang, B. Y . Lin, N. Lambert, Y . Choi,
+and N. Dziri, “Wildguard: Open one-stop moderation tools for safety
+risks, jailbreaks, and refusals of llms,”arXiv preprint arXiv:2406.18495,
+2024.
+[23] Y . Mou, S. Zhang, and W. Ye, “Sg-bench: Evaluating llm safety
+generalization across diverse tasks and prompt types,”Advances in
+Neural Information Processing Systems, vol. 37, pp. 123 032–123 054,
+2024.
+[24] X. Qi, Y . Zeng, T. Xie, P.-Y . Chen, R. Jia, P. Mittal, and P. Henderson,
+“Fine-tuning aligned language models compromises safety, even when
+users do not intend to!”arXiv preprint arXiv:2310.03693, 2023.
+[25] J. Ji, M. Liu, J. Dai, X. Pan, C. Zhang, C. Bian, B. Chen, R. Sun,
+Y . Wang, and Y . Yang, “Beavertails: Towards improved safety alignment
+of llm via a human-preference dataset,”Advances in Neural Information
+Processing Systems, vol. 36, pp. 24 678–24 704, 2023.
+[26] Y . Wang, H. Li, X. Han, P. Nakov, and T. Baldwin, “Do-not-
+answer: A dataset for evaluating safeguards in llms,”arXiv preprint
+arXiv:2308.13387, 2023.
+[27] Y . Zeng, Y . Yang, A. Zhou, J. Z. Tan, Y . Tu, Y . Mai, K. Klyman,
+M. Pan, R. Jia, D. Songet al., “Air-bench 2024: A safety benchmark
+based on risk categories from regulations and policies,”arXiv preprint
+arXiv:2407.17436, 2024.
+[28] A. Souly, Q. Lu, D. Bowen, T. Trinh, E. Hsieh, S. Pandey, P. Abbeel,
+J. Svegliato, S. Emmons, O. Watkinset al., “A strongreject for empty
+jailbreaks,”Advances in Neural Information Processing Systems, vol. 37,
+pp. 125 416–125 440, 2024.
+[29] M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee,
+N. Li, S. Basart, B. Liet al., “Harmbench: A standardized evaluation
+framework for automated red teaming and robust refusal,”Proceedings
+of Machine Learning Research, 2024.
+[30] P. Chao, E. Debenedetti, A. Robey, M. Andriushchenko, F. Croce,
+V . Sehwag, E. Dobriban, N. Flammarion, G. J. Pappas, F. Trameret al.,
+“Jailbreakbench: An open robustness benchmark for jailbreaking large
+language models,”Advances in Neural Information Processing Systems,
+vol. 37, pp. 55 005–55 029, 2024.
+[31] X. Li, J. Ding, C. Peng, B. Zhao, X. Gao, H. Gao, and X. Gu, “Safe-
+genbench: A benchmark framework for security vulnerability detection
+in llm-generated code,”arXiv preprint arXiv:2506.05692, 2025.
+[32] Y . Lu, J. Cheng, Z. Zhang, S. Cui, C. Wang, X. Gu, Y . Dong, J. Tang,
+H. Wang, and M. Huang, “Longsafety: Evaluating long-context safety
+of large language models,”arXiv preprint arXiv:2502.16971, 2025.
+[33] H. Xu, W. Zhang, Z. Wang, F. Xiao, R. Zheng, Y . Feng, Z. Ba, and
+K. Ren, “Redagent: Red teaming large language models with context-
+aware autonomous language agent,”arXiv preprint arXiv:2407.16667,
+2024.
+[34] G. Sun, X. Zhan, S. Feng, P. C. Woodland, and J. Such, “Case-bench:
+Context-aware safety benchmark for large language models,”arXiv
+preprint arXiv:2501.14940, 2025.
+[35] Q. Xie, W. Han, Z. Chen, R. Xiang, X. Zhang, Y . He, M. Xiao, D. Li,
+Y . Dai, D. Fenget al., “Finben: A holistic financial benchmark for large
+language models,”Advances in Neural Information Processing Systems,
+vol. 37, pp. 95 716–95 743, 2024.
+[36] S. Kaur, C. Smiley, A. Gupta, J. Sain, D. Wang, S. Siddagangappa,
+T. Aguda, and S. Shah, “Refind: Relation extraction financial dataset,”
+inProceedings of the 46th International ACM SIGIR Conference on
+Research and Development in Information Retrieval, 2023, pp. 3054–
+3063.
+[37] Z. Chen, W. Chen, C. Smiley, S. Shah, and et al., “Finqa: A dataset of
+numerical reasoning over financial data,” inProceedings of the 2021
+Conference on Empirical Methods in Natural Language Processing
+(EMNLP), 2021. [Online]. Available: https://arxiv.org/abs/2109.00122
+[38] V . Reddy, R. Koncel-Kedziorski, V . D. Lai, and et al., “Docfinqa:
+A long-context financial reasoning dataset,” inProceedings of ACL
+2024 (Short Papers), 2024. [Online]. Available: https://huggingface.co/
+datasets/kensho/DocFinQA
+[39] Y . Zhang and Z. Wei, “Boosting jailbreak attack with momentum,” in
+ICASSP 2025-2025 IEEE International Conference on Acoustics, Speech
+and Signal Processing (ICASSP). IEEE, 2025, pp. 1–5.
+[40] X. Jia, T. Pang, C. Du, Y . Huang, J. Gu, Y . Liu, X. Cao, and
+M. Lin, “Improved techniques for optimization-based jailbreaking on
+large language models,”arXiv preprint arXiv:2405.21018, 2024.
+[41] J. Hayase, E. Borevkovi ´c, N. Carlini, F. Tram `er, and M. Nasr, “Query-
+based adversarial prompt generation,”Advances in Neural Information
+Processing Systems, vol. 37, pp. 128 260–128 279, 2024.
+[42] X. Liu, N. Xu, M. Chen, and C. Xiao, “Autodan: Generating stealthy
+jailbreak prompts on aligned large language models,”arXiv preprint
+arXiv:2310.04451, 2023.
+[43] A. Mehrotra, M. Zampetakis, P. Kassianik, B. Nelson, H. Anderson,
+Y . Singer, and A. Karbasi, “Tree of attacks: Jailbreaking black-box llms
+automatically,”Advances in Neural Information Processing Systems,
+2024.
+[44] J. Yu, X. Lin, Z. Yu, and X. Xing, “Gptfuzzer: Red teaming large
+language models with auto-generated jailbreak prompts,”arXiv preprint
+arXiv:2309.10253, 2023.
+[45] Y . Yuan, W. Jiao, W. Wang, J.-t. Huang, P. He, S. Shi, and Z. Tu, “Gpt-
+4 is too smart to be safe: Stealthy chat with llms via cipher,”arXiv
+preprint arXiv:2308.06463, 2023.
+[46] B. R. Huang, “Plentiful jailbreaks with string compositions,”arXiv
+preprint arXiv:2411.01084, 2024.
+[47] Y . Liu, X. He, M. Xiong, J. Fu, S. Deng, and B. Hooi, “Flipattack:
+Jailbreak llms via flipping,”arXiv preprint arXiv:2410.02832, 2024.
+[48] A. J. Yepes, Y . You, J. Milczek, S. Laverde, and R. Li, “Financial report
+chunking for effective retrieval augmented generation,”arXiv preprint
+arXiv:2402.05131, 2024.
+[49] X. Liu, P. Li, E. Suh, Y . V orobeychik, Z. Mao, S. Jha, P. McDaniel,
+H. Sun, B. Li, and C. Xiao, “Autodan-turbo: A lifelong agent for strategy
+self-exploration to jailbreak llms,”arXiv preprint arXiv:2410.05295,
+2024.
+[50] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle,
+A. Letman, A. Mathur, A. Schelten, A. Vaughanet al., “The llama 3
+herd of models,”arXiv preprint arXiv:2407.21783, 2024.
+[51] A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu,
+F. Huang, H. Weiet al., “Qwen2. 5 technical report,”arXiv preprint
+arXiv:2412.15115, 2024.
+[52] G. Team, M. Riviere, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju,
+L. Hussenot, T. Mesnard, B. Shahriari, A. Ram ´eet al., “Gemma 2:
+Improving open language models at a practical size,”arXiv preprint
+arXiv:2408.00118, 2024.
+[53] L. Research, S. An, K. Bae, E. Choi, K. Choi, S. J. Choi, S. Hong,
+J. Hwang, H. Jeon, G. J. Joet al., “Exaone 3.5: Series of large language
+models for real-world use cases,”arXiv preprint arXiv:2412.04862,
+2024.
+[54] J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman,
+D. Almeida, J. Altenschmidt, S. Altman, S. Anadkatet al., “Gpt-4
+technical report,”arXiv preprint arXiv:2303.08774, 2023.
+[55] Anthropic, “The claude 3 model family: Opus, sonnet, haiku,”
+2024. [Online]. Available: https://api.semanticscholar.org/CorpusID:
+268232499
+[56] G. Team, R. Anil, S. Borgeaud, J.-B. Alayrac, J. Yu, R. Soricut,
+J. Schalkwyk, A. M. Dai, A. Hauth, K. Millicanet al., “Gemini: a family
+of highly capable multimodal models,”arXiv preprint arXiv:2312.11805,
+2023.
+[57] Y . Chen, H. Gao, G. Cui, F. Qi, L. Huang, Z. Liu, and M. Sun, “Why
+should adversarial perturbations be imperceptible? rethink the research
+paradigm in adversarial nlp,”arXiv preprint arXiv:2210.10683, 2022.
+[58] R. A. Krueger,Focus groups: A practical guide for applied research.
+Sage publications, 2014.
+[59] D. W. Stewart and P. N. Shamdasani,Focus groups: Theory and practice.
+Sage publications, 2014.
+[60] J. Cohen, “A coefficient of agreement for nominal scales,”Educational
+and psychological measurement, vol. 20, no. 1, pp. 37–46, 1960.
+[61] K. Krippendorff, “Reliability in content analysis: Some common mis-
+conceptions and recommendations,”Human communication research,
+vol. 30, no. 3, pp. 411–433, 2004.

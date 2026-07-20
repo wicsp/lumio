@@ -1,0 +1,37 @@
+:root {
+  color-scheme: light dark;
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+body {
+  width: 220px;
+  margin: 0;
+  padding: 14px;
+}
+
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #6d5dfc;
+  color: white;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+#status {
+  min-height: 1.4em;
+  margin: 9px 1px 0;
+  color: CanvasText;
+}
+
+#status[data-kind="error"] {
+  color: #d33a2c;
+}

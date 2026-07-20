@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Lumio — Send to Atlas",
+  "version": "0.1.0",
+  "description": "Extract the current page and send it to Atlas for normal Lumio summarization.",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["http://127.0.0.1:43119/*"],
+  "action": {
+    "default_title": "Send to Atlas",
+    "default_popup": "popup.html"
+  }
+}

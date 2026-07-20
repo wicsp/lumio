@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Fetch B站 video AI subtitle and output plain text transcript.
+"""Fetch B站 video subtitles and output a plain-text transcript.
 
 Usage:
     python fetch_subtitle.py <url> [--cookie-file <path>] [--lang ai-zh]
 
-Requires: A Netscape-format cookie file with valid B站 SESSDATA.
-If no cookie file provided, uses /tmp/bilibili_cookies.txt.
+Cookies are optional. Public metadata and subtitles are attempted anonymously when
+no Netscape-format cookie file is supplied.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import re
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -116,7 +117,12 @@ def fetch_video_info(bvid: str, cookie_file: str | None) -> dict[str, str]:
     }
 
 
-def fetch_subtitle(bvid: str, cid: str, cookie_file: str | None, lang: str = "ai-zh") -> str | None:
+def fetch_subtitle(
+    bvid: str,
+    cid: str,
+    cookie_file: str | None,
+    lang: str = "ai-zh",
+) -> tuple[str | None, str | None]:
     """Fetch subtitle JSON and extract text content."""
     # Get wbi keys and sign
     img_key, sub_key, _ = get_wbi_keys(cookie_file)
@@ -131,17 +137,19 @@ def fetch_subtitle(bvid: str, cid: str, cookie_file: str | None, lang: str = "ai
 
     subs = player_data.get("data", {}).get("subtitle", {}).get("subtitles", [])
     if not subs:
-        return None
+        return None, None
 
     # Find matching language
-    sub_url = None
+    selected_sub = None
     for s in subs:
         if s.get("lan") == lang:
-            sub_url = s["subtitle_url"]
+            selected_sub = s
             break
-    if not sub_url:
+    if selected_sub is None:
         # Fallback: first available
-        sub_url = subs[0]["subtitle_url"]
+        selected_sub = subs[0]
+
+    sub_url = selected_sub["subtitle_url"]
 
     # Download subtitle JSON
     if sub_url.startswith("//"):
@@ -156,7 +164,16 @@ def fetch_subtitle(bvid: str, cid: str, cookie_file: str | None, lang: str = "ai
         content = item.get("content", "")
         lines.append(f"[{start:.1f}s] {content}")
 
-    return "\n".join(lines)
+    return "\n".join(lines), selected_sub.get("lan")
+
+
+def write_status(path: str | None, status: dict) -> None:
+    """Write bounded acquisition metadata for the caller."""
+    if path:
+        Path(path).write_text(
+            json.dumps(status, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
 
 
 def main():
@@ -165,8 +182,8 @@ def main():
     )
     parser.add_argument("url", help="B站 video URL or BV号")
     parser.add_argument(
-        "-c", "--cookie-file", default="/tmp/bilibili_cookies.txt",
-        help="Netscape-format cookie file (default: /tmp/bilibili_cookies.txt)"
+        "-c", "--cookie-file", default=None,
+        help="Optional Netscape-format cookie file"
     )
     parser.add_argument(
         "-l", "--lang", default="ai-zh",
@@ -188,22 +205,25 @@ def main():
         "--no-desc", action="store_true",
         help="Skip fetching video description"
     )
+    parser.add_argument(
+        "--status-output", default=None,
+        help="Write bounded JSON acquisition status to this path",
+    )
     args = parser.parse_args()
 
     # Parse BV
     bvid = parse_bv(args.url)
     print(f"BV: {bvid}", file=sys.stderr)
 
-    # Check cookies
-    if not Path(args.cookie_file).exists():
-        print(f"Error: Cookie file not found: {args.cookie_file}", file=sys.stderr)
-        print("Run extract_cookies.py first to get B站 login cookies.", file=sys.stderr)
-        sys.exit(1)
+    cookie_file = args.cookie_file
+    if cookie_file and not Path(cookie_file).exists():
+        print(f"Warning: Cookie file not found; continuing anonymously: {cookie_file}", file=sys.stderr)
+        cookie_file = None
 
     # Get pagelist for cid(s)
     pagelist_data = api_get(
         f"https://api.bilibili.com/x/player/pagelist?bvid={bvid}",
-        args.cookie_file,
+        cookie_file,
     )
     pages = pagelist_data.get("data", [])
     if not pages:
@@ -215,7 +235,7 @@ def main():
     # Fetch video description
     video_header = ""
     if not args.no_desc:
-        info = fetch_video_info(bvid, args.cookie_file)
+        info = fetch_video_info(bvid, cookie_file)
         if info["title"]:
             video_header += f"# {info['title']}\n"
         if info["desc"]:
@@ -224,20 +244,23 @@ def main():
             video_header += "\n---\n\n"
 
     all_transcripts = []
+    selected_languages: set[str] = set()
+    cids: list[str] = []
 
     for i, page in enumerate(pages):
         cid = str(page["cid"])
+        cids.append(cid)
         part_name = page.get("part", f"Part {i+1}")
         print(f"Part {i+1}: {part_name} (cid={cid})", file=sys.stderr)
 
         # Check available subtitles
-        img_key, sub_key, _ = get_wbi_keys(args.cookie_file)
+        img_key, sub_key, _ = get_wbi_keys(cookie_file)
         w_rid, wts = wbi_sign({"bvid": bvid, "cid": cid}, img_key, sub_key)
         player_url = (
             f"https://api.bilibili.com/x/player/wbi/v2?"
             f"bvid={bvid}&cid={cid}&w_rid={w_rid}&wts={wts}"
         )
-        player_data = api_get(player_url, args.cookie_file)
+        player_data = api_get(player_url, cookie_file)
         subs = player_data.get("data", {}).get("subtitle", {}).get("subtitles", [])
 
         if args.list_subs:
@@ -250,8 +273,15 @@ def main():
             print(f"  ⚠ No subtitles available for this part", file=sys.stderr)
             continue
 
-        transcript = fetch_subtitle(bvid, cid, args.cookie_file, args.lang)
+        transcript, selected_language = fetch_subtitle(
+            bvid,
+            cid,
+            cookie_file,
+            args.lang,
+        )
         if transcript:
+            if selected_language:
+                selected_languages.add(selected_language)
             if args.no_timestamps:
                 transcript = "\n".join(
                     line.split("] ", 1)[1] if "] " in line else line
@@ -263,15 +293,41 @@ def main():
                 all_transcripts.append(transcript)
 
     if args.list_subs:
+        write_status(
+            args.status_output,
+            {
+                "status": "listed",
+                "bvid": bvid,
+                "part_count": len(pages),
+                "cids": cids,
+                "authenticated": cookie_file is not None,
+            },
+        )
         return
 
     result = video_header + "\n\n".join(all_transcripts)
+    has_transcript = any(item.strip() for item in all_transcripts)
     if args.output:
         with open(args.output, "w") as f:
             f.write(result)
         print(f"\nTranscript saved → {args.output} ({len(result)} chars)", file=sys.stderr)
     else:
         print(result)
+
+    write_status(
+        args.status_output,
+        {
+            "status": "available" if has_transcript else "unavailable",
+            "reason": None if has_transcript else "no_subtitles",
+            "bvid": bvid,
+            "part_count": len(pages),
+            "cids": cids,
+            "requested_language": args.lang,
+            "selected_languages": sorted(selected_languages),
+            "authenticated": cookie_file is not None,
+            "character_count": len(result),
+        },
+    )
 
 
 if __name__ == "__main__":

@@ -1,6 +1,3 @@
-// Adapted into Lumio from @diegopetrucci/pi-extensions/minimal-footer.
-// Lumio keeps the implementation local so it can be customized without a runtime plugin dependency.
-
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
@@ -356,40 +353,42 @@ export default function (pi: ExtensionAPI) {
 
 					// Get extension statuses from other plugins
 					const extensionStatuses = footerData.getExtensionStatuses();
+					const workText = extensionStatuses.get("atlas-work");
 					const statusParts: string[] = [];
 					for (const [key, value] of extensionStatuses) {
-						if (value) {
-							// Simplify checkpoint display: "◆ 10 checkpoints" -> "10↩"
-							if (key === "rewind") {
-								const match = value.match(/◆\s*(\d+)\s*checkpoints?/i) || value.match(/(\d+)\s*checkpoints?/i);
-								if (match) {
-									statusParts.push(theme.fg("accent", `${match[1]}↩`));
-								} else {
-									statusParts.push(value);
-								}
+						if (!value || key === "atlas-work") continue;
+						// Simplify checkpoint display: "◆ 10 checkpoints" -> "10↩"
+						if (key === "rewind") {
+							const match = value.match(/◆\s*(\d+)\s*checkpoints?/i) || value.match(/(\d+)\s*checkpoints?/i);
+							if (match) {
+								statusParts.push(theme.fg("accent", `${match[1]}↩`));
 							} else {
 								statusParts.push(value);
 							}
+						} else {
+							statusParts.push(value);
 						}
 					}
 					const statusLine = statusParts.length > 0
 						? statusParts.join(theme.fg("dim", " · "))
 						: undefined;
 
-					// Left side: checkpoints only
-					const leftParts: string[] = [];
-					if (statusLine) leftParts.push(statusLine);
-					const line1Left = leftParts.length > 0
-						? leftParts.join(theme.fg("dim", " · "))
-						: "";
+					// Left side: Atlas work status (via ctx.ui.setStatus)
+					const line1Left = theme.fg("dim", workText || "Atlas: disconnected");
 
-					const line1Fits = visibleWidth(line1Left) + visibleWidth(repoAndGitStyled) + 2 <= width;
+					// Right side: checkpoints + repo/branch/git
+					const rightParts: string[] = [];
+					if (statusLine) rightParts.push(statusLine);
+					rightParts.push(repoAndGitStyled);
+					const line1Right = rightParts.join(theme.fg("dim", " · "));
+
+					const line1Fits = visibleWidth(line1Left) + visibleWidth(line1Right) + 2 <= width;
 					const line2Fits = visibleWidth(contextStyled) + visibleWidth(modelAndCHStyled) + 2 <= width;
 
 					const lines: string[] = [];
 
 					if (line1Fits && line2Fits) {
-						lines.push(renderSplitLine(line1Left, repoAndGitStyled));
+						lines.push(renderSplitLine(line1Left, line1Right));
 						lines.push(renderSplitLine(contextStyled, modelAndCHStyled));
 					} else {
 						if (line1Left) lines.push(truncateToWidth(line1Left, width));
