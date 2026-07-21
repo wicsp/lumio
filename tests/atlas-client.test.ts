@@ -36,6 +36,7 @@ test("Lumio registers only its interaction adapter, not a generic Pi executor", 
     );
     assert.equal(registration.node.node_id, "macsp");
     assert.equal(registration.executors[0]?.name, "lumio-interactive");
+    assert.deepEqual(registration.available_grants, []);
     assert.equal(registration.metadata.runner_mode, "background");
     assert.deepEqual(registration.legacy_capabilities, ["bilibili-summary-v4"]);
   } finally {

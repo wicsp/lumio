@@ -3,7 +3,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import type { AtlasClient } from "./client";
 import type { AtlasSourceRecord } from "./obsidian";
-import type { RunRecord } from "./work";
 import { storeTextArtifact } from "./artifacts";
 
 export const DEFAULT_WEB_CAPTURE_PORT = 43_119;
@@ -25,10 +24,6 @@ export interface WebCaptureResult {
 export interface WebCaptureServer {
   port: number;
   close(): Promise<void>;
-}
-
-export function webCaptureNodeCapability(nodeId: string): string {
-  return `web-capture-node:${nodeId}`;
 }
 
 function capturePort(): number {
@@ -85,17 +80,12 @@ export async function captureWebPage(
   });
   if (!source.ok) throw new Error(`Atlas Source capture failed: ${source.error}`);
 
-  const project = await client.controlPost("/api/projects", {
-    project_id: "web-capture",
-    name: "Web Capture",
-    description: "Pages captured by the Lumio Chrome extension.",
-  });
-  if (!project.ok) throw new Error(`Atlas project setup failed: ${project.error}`);
-
-  const enqueued = await client.controlPost<RunRecord>("/api/runs/enqueue", {
-    project_id: "web-capture",
-    job_name: "web-summary-v1",
-    capabilities_required: ["web-summary-v1", webCaptureNodeCapability(client.config.nodeId)],
+  const enqueued = await client.controlPost<{
+    invocation_id: string;
+    step_runs: Record<string, string>;
+  }>("/api/workflow-invocations", {
+    workflow_name: "web.summary",
+    workflow_version: "1",
     input: {
       source_id: source.data.source_id,
       url: payload.url,
@@ -103,11 +93,11 @@ export async function captureWebPage(
       captured_at: payload.captured_at,
       extraction,
     },
-    priority: 5,
-    metadata: { requested_via: "lumio-web-clipper" },
   });
   if (!enqueued.ok) throw new Error(`Atlas enqueue failed: ${enqueued.error}`);
-  return { source_id: source.data.source_id, run_id: enqueued.data.run_id };
+  const runId = enqueued.data.step_runs.summarize;
+  if (!runId) throw new Error("Atlas web workflow omitted summarize step");
+  return { source_id: source.data.source_id, run_id: runId };
 }
 
 function isExtensionOrigin(request: IncomingMessage): boolean {

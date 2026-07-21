@@ -5,20 +5,13 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { AtlasClient } from "../extensions/atlas/client";
-import {
-  ATLAS_WORK_POLL_INTERVAL_MS,
-  reconcileResourceCards,
-} from "../extensions/atlas/index";
+import { reconcileResourceCards } from "../extensions/atlas/index";
 import { storeSummaryArtifact } from "../extensions/atlas/artifacts";
 import type {
   AtlasResourceRecord,
   AtlasSourceRecord,
 } from "../extensions/atlas/obsidian";
-import type { ArtifactRef } from "../extensions/atlas/work";
-
-test("interactive Atlas work polling stays responsive", () => {
-  assert.equal(ATLAS_WORK_POLL_INTERVAL_MS, 2_000);
-});
+import type { ArtifactRef } from "../extensions/atlas/contracts";
 
 function summaryResource(
   resourceId: string,

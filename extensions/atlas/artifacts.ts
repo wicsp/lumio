@@ -12,7 +12,7 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import type { ArtifactRefCreate, ResourceCreate } from "./work";
+import type { ArtifactRefCreate, ResourceCreate } from "./contracts";
 
 export function artifactRoot(): string {
   const root = process.env.ATLAS_ARTIFACT_ROOT?.trim();

@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 
 import type { AtlasClient } from "./client";
 import type { AtlasResourceRecord, AtlasSourceRecord } from "./obsidian";
-import type { RunRecord } from "./work";
+import type { RunRecord } from "./contracts";
 
 interface KnowledgeRefRecord {
   note_id: string;

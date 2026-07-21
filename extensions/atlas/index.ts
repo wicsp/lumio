@@ -11,28 +11,17 @@
  *   - Handler signature uses typed HandlerResult instead of raw strings.
  */
 
-import type { Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   parseConfig,
   createClient,
   generateAgentId,
   generateAgentName,
   buildRunnerRegistration,
-  configuredRunnerGrants,
   type AtlasClient,
   type AtlasClientStatus,
   type AtlasRunnerRegistration,
 } from "./client";
-import {
-  startWorkPoller,
-  type WorkPoller,
-  type WorkStatus,
-  type RunRecord,
-  type HandlerResult,
-  type HandlerSuccess,
-} from "./work";
-import { webSummaryHandler } from "./jobs/web";
 import {
   configuredVaultPath,
   ensureVaultStructure,
@@ -43,22 +32,16 @@ import {
   type AtlasResourceRecord,
   type AtlasSourceRecord,
 } from "./obsidian";
-import { createPiWebSummaryGenerator } from "./summarize";
 import {
   completeResourceComment,
   createResourceComment,
   fetchResourceBundle,
   projectResourceBundle,
-  vortexCommentHandler,
-  vortexCommentSyncHandler,
   type AtlasResourceBundle,
 } from "./resource-review";
-import { vortexResourcePurgeHandler } from "./resource-purge";
 import { generateDailyReviewDigest, generateWeeklyAudit } from "./digests";
-import { createComparisonHandler } from "./comparison";
 import {
   startWebCaptureServer,
-  webCaptureNodeCapability,
   type WebCaptureServer,
 } from "./web-capture";
 
@@ -66,19 +49,13 @@ import {
 
 let client: AtlasClient | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-let workPoller: WorkPoller | null = null;
-let summaryRuntime: { model: Model<any>; modelRegistry: ModelRegistry } | null = null;
 let webCaptureServer: WebCaptureServer | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const REGISTRATION_TIMEOUT_MS = 5_000;
-export const ATLAS_WORK_POLL_INTERVAL_MS = 2_000;
 
 function advertisedCapabilities(): string[] {
-  const capabilities = Array.from(legacyJobHandlers);
-  const config = parseConfig();
-  if (config) capabilities.push(webCaptureNodeCapability(config.nodeId));
-  return capabilities;
+  return [];
 }
 
 // ─── Heartbeat loop ──────────────────────────────────────────────────
@@ -109,48 +86,6 @@ function stopHeartbeat() {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
   }
-}
-
-// ─── Work polling ───────────────────────────────────────────────────
-
-// ─── Job router ─────────────────────────────────────────────────────
-
-/** Job handlers registered by name. M2.5: returns typed HandlerResult. */
-const jobHandlers = new Map<
-  string,
-  (run: RunRecord, signal: AbortSignal) => Promise<HandlerResult>
->();
-const legacyJobHandlers = new Set<string>();
-
-/** Register a job handler for a given job_name. */
-export function registerJobHandler(
-  name: string,
-  handler: (run: RunRecord, signal: AbortSignal) => Promise<HandlerResult>,
-) {
-  jobHandlers.set(name, handler);
-}
-
-function registerLegacyJobHandler(
-  name: string,
-  handler: (run: RunRecord, signal: AbortSignal) => Promise<HandlerResult>,
-) {
-  registerJobHandler(name, handler);
-  legacyJobHandlers.add(name);
-}
-
-async function projectPublishedResources(
-  c: AtlasClient,
-  _run: RunRecord,
-  result: HandlerSuccess,
-): Promise<void> {
-  if (!configuredVaultPath()) return;
-  let publishedComparison = false;
-  for (const resource of result.resources) {
-    if (resource.kind !== "summary" && resource.kind !== "comparison") continue;
-    if (resource.kind === "comparison") publishedComparison = true;
-    await projectResourceBundle(await fetchResourceBundle(c, resource.resource_id));
-  }
-  if (publishedComparison) await reconcileResourceCards(c);
 }
 
 export interface ResourceCardReconciliation {
@@ -263,106 +198,10 @@ function formatReconciliation(result: ResourceCardReconciliation): string {
   return result.errors.length > 0 ? `${counts}; ${result.errors.join("; ")}` : counts;
 }
 
-/**
- * Dispatch a claimed run to the appropriate handler.
- * M2.5: unknown jobs are explicitly failed instead of silently succeeding.
- */
-async function dispatchJob(
-  run: RunRecord,
-  signal: AbortSignal,
-): Promise<HandlerResult> {
-  const requiredGrants = run.requirements?.grants ?? [];
-  const localGrants = new Set(configuredRunnerGrants());
-  const unavailable = requiredGrants.filter((grant) => !localGrants.has(grant));
-  if (unavailable.length > 0) {
-    return {
-      status: "failure",
-      code: "local_grant_unavailable",
-      message: `Runner lacks locally allowed grants: ${unavailable.join(", ")}`,
-      retryable: false,
-    };
-  }
-  const workflowKey = run.workflow && run.step_name
-    ? `${run.workflow.name}@${run.workflow.version}:${run.step_name}`
-    : null;
-  const handler = (workflowKey ? jobHandlers.get(workflowKey) : undefined)
-    ?? jobHandlers.get(run.job_name);
-  if (handler) return handler(run, signal);
-
-  // No handler registered — fail explicitly.
-  return {
-    status: "failure",
-    code: "unsupported_job",
-    message: `No handler registered for job: ${run.job_name}`,
-    retryable: false,
-  };
-}
-
-function startWorkPolling(c: AtlasClient, ui: { setStatus: (k: string, v: string | undefined) => void }) {
-  stopWorkPolling();
-
-  const capabilities = advertisedCapabilities();
-
-  workPoller = startWorkPoller(
-    c,
-    {
-      capabilities,
-      pollIntervalMs: ATLAS_WORK_POLL_INTERVAL_MS,
-      heartbeatIntervalMs: 15_000,
-    },
-    dispatchJob,
-    (ws) => {
-      ui.setStatus("atlas-work", compactWorkStatus(ws));
-    },
-    (run, result) => projectPublishedResources(c, run, result),
-  );
-}
-
-function stopWorkPolling() {
-  if (workPoller !== null) {
-    workPoller.stop();
-    workPoller = null;
-  }
-}
-
 async function stopWebCaptureServer() {
   const active = webCaptureServer;
   webCaptureServer = null;
   if (active) await active.close();
-}
-
-// ─── Work status for footer ─────────────────────────────────────────
-
-function compactWorkStatus(ws: WorkStatus): string {
-  switch (ws.kind) {
-    case "idle":
-      return "Atlas: idle";
-    case "claimed":
-      return `Atlas: running ${ws.run.job_name}`;
-    case "completed":
-      return ws.result === "success"
-        ? `Atlas: ✓ ${ws.run.job_name}`
-        : `Atlas: ✗ ${ws.run.job_name}`;
-    case "abandoned":
-      return `Atlas: ⚠ ${ws.run.job_name}`;
-  }
-}
-
-// ─── Status display ──────────────────────────────────────────────────
-
-function formatWorkStatus(ws: WorkStatus): string {
-  switch (ws.kind) {
-    case "idle":
-      return "  work: idle (polling for jobs)";
-    case "claimed":
-      return `  work: running ${ws.run.job_name} (${ws.run.run_id.slice(0, 16)}…) · attempt ${ws.run.attempt_number}/${ws.run.max_attempts}`;
-    case "completed": {
-      const emoji = ws.result === "success" ? "✓" : "✗";
-      return `  work: last job ${emoji} ${ws.run.job_name} (${ws.run.run_id.slice(0, 16)}…) · ${ws.detail}`;
-    }
-    case "abandoned":
-      return `  work: ⚠ lease lost — ${ws.run.job_name} (${ws.run.run_id.slice(0, 16)}…) · ${ws.reason}`;
-  }
 }
 
 function formatStatus(status: AtlasClientStatus): string {
@@ -405,42 +244,6 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
 // ─── Extension entry point ───────────────────────────────────────────
 
 export default function atlasExtension(pi: ExtensionAPI) {
-  // ── Register job handlers ────────────────────────────────────
-  const summarizeWeb = createPiWebSummaryGenerator(() => summaryRuntime);
-  registerLegacyJobHandler(
-    "web-summary-v1",
-    (run, signal) => webSummaryHandler(run, signal, summarizeWeb),
-  );
-  registerLegacyJobHandler("vortex-comment-v1", (run, signal) => {
-    const activeClient = client;
-    if (!activeClient) {
-      return Promise.resolve({
-        status: "failure" as const,
-        code: "atlas_unavailable",
-        message: "Atlas client is not available in this Lumio session",
-        retryable: true,
-      });
-    }
-    return vortexCommentHandler(run, signal, activeClient);
-  });
-  registerLegacyJobHandler("vortex-comment-sync-v1", (run, signal) => {
-    const activeClient = client;
-    if (!activeClient) {
-      return Promise.resolve({
-        status: "failure" as const,
-        code: "atlas_unavailable",
-        message: "Atlas client is not available in this Lumio session",
-        retryable: true,
-      });
-    }
-    return vortexCommentSyncHandler(run, signal, activeClient);
-  });
-  registerLegacyJobHandler("vortex-resource-purge-v1", vortexResourcePurgeHandler);
-  registerLegacyJobHandler(
-    "vortex-comparison-v1",
-    createComparisonHandler(() => client, () => summaryRuntime),
-  );
-
   // ── /atlas enqueue command ───────────────────────────────────
   pi.registerCommand("atlas:enqueue", {
     description: "Enqueue a Bilibili video URL for summary processing",
@@ -737,21 +540,12 @@ export default function atlasExtension(pi: ExtensionAPI) {
         return;
       }
       try {
-        await client.controlPost("/api/projects", {
-          project_id: "resource-review",
-          name: "Resource Review",
-          description: "Human-requested review and comparison work.",
-        });
-        const enqueued = await client.controlPost<RunRecord>("/api/runs/enqueue", {
-          project_id: "resource-review",
-          job_name: "vortex-comparison-v1",
-          capabilities_required: ["vortex-comparison-v1"],
-          input: { resource_id: resourceId },
-          priority: 20,
-          metadata: { requested_via: "lumio-command" },
-        });
+        const enqueued = await client.controlPost<{ run: { run_id: string } }>(
+          "/api/review-actions/compare",
+          { resource_id: resourceId },
+        );
         if (!enqueued.ok) throw new Error(enqueued.error);
-        ctx.ui.notify(`Atlas comparison enqueued: ${enqueued.data.run_id}.`, "info");
+        ctx.ui.notify(`Atlas comparison enqueued: ${enqueued.data.run.run_id}.`, "info");
       } catch (err) {
         ctx.ui.notify(`Atlas comparison failed: ${err instanceof Error ? err.message : String(err)}`, "warning");
       }
@@ -779,10 +573,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
       }
 
       const status = await client.status();
-      let msg = formatStatus(status);
-      if (workPoller) {
-        msg += "\n" + formatWorkStatus(workPoller.status());
-      }
+      const msg = formatStatus(status);
       ctx.ui.notify(msg, status.kind === "connected" ? "info" : "warning");
     },
   });
@@ -793,7 +584,6 @@ export default function atlasExtension(pi: ExtensionAPI) {
     stopHeartbeat();
     await stopWebCaptureServer();
     client = null;
-    summaryRuntime = null;
 
     const config = parseConfig();
     if (!config) {
@@ -801,9 +591,6 @@ export default function atlasExtension(pi: ExtensionAPI) {
       return;
     }
 
-    summaryRuntime = ctx.model
-      ? { model: ctx.model, modelRegistry: ctx.modelRegistry }
-      : null;
     client = createClient(config, ctx.sessionManager.getSessionId());
     try {
       webCaptureServer = await startWebCaptureServer(() => client);
@@ -864,24 +651,15 @@ export default function atlasExtension(pi: ExtensionAPI) {
         // a subsequent heartbeat call (Atlas upserts on register).
         startHeartbeat(client, ctx);
       }
-
-      startWorkPolling(client, ctx.ui);
     } catch {
       // Connectivity is optional — start heartbeat anyway.
       startHeartbeat(client, ctx);
-      startWorkPolling(client, ctx.ui);
     }
   });
 
-  pi.on("model_select", (event, ctx) => {
-    summaryRuntime = { model: event.model, modelRegistry: ctx.modelRegistry };
-  });
-
   pi.on("session_shutdown", async () => {
-    stopWorkPolling();
     stopHeartbeat();
     await stopWebCaptureServer();
     client = null;
-    summaryRuntime = null;
   });
 }

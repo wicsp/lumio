@@ -78,22 +78,22 @@ pi -e <path-to-lumio>
 - Lumio minimal footer：替换默认 footer，显示 branch、repo、context、model、thinking level，并在上下文过大时提示 `DUMB ZONE`。
 - Lumio quiet tools：覆盖内置 `bash/read/grep/find/ls/edit/write` 的 TUI renderer，让折叠工具行只显示一行调用和展开提示，不改变模型可见的工具结果。
 - Gnosis、Librarian、Oracle、review、triage、questionnaire 和 workflow audit 等本地工具与命令。
-- Atlas RFC 0003/0004：把 Bilibili 捕获处理为可追踪的 Source/Resource，并将机器生成的摘要投影到 Vortex；Console 请求的 `vortex-comment-v1` 和 `/atlas:comment` 共用同一套空白人类评论流程。
+- Atlas 交互入口：捕获 Bilibili/Web Source、触发版本化 Workflow、查看状态，并将 Atlas Resource 投影到 Vortex。
 - Lumio Web Clipper：Chrome 中只有一个 `Send to Atlas` 按钮；浏览器提取当前已渲染页面，Lumio 经本机 bridge 写入 extraction Artifact 并排队正常网页摘要。
 - Bark 与桌面/终端完成通知。
 
 ### Atlas / Vortex 工作流
 
-Lumio 不再承载 Bilibili 后台 executor 或对应 Skill；它们位于独立 AtlasRunner 的
-`workflows/bilibili-summary-v5/` bundle。Lumio 只保留触发 Workflow、查看状态和本地
-Vortex/Obsidian 交互。
+Lumio 不再领取或执行任何 Atlas Run，也不注册 legacy capability。Bilibili、Web 摘要、
+观点对比、Console 发起的评论草稿/同步和 Resource 清理全部由独立 AtlasRunner 执行。
+Lumio 只保留捕获/命令入口、状态查看以及当前 Pi 会话中的 Vortex/Obsidian 交互。
 
-需要本地受保护资源的 Workflow 必须在 AtlasRunner 的 node-local manifest 中显式授权。
-例如 Bilibili acquisition step 同时要求 Atlas attempt 分配、Runner manifest 声明
-`bilibili-cookie:read`；仅仅运行在 macsp 或安装了浏览器并不会自动获得 Cookie 权限。
+需要本地受保护资源的 Workflow 必须在 AtlasRunner 的 node-local manifest 中显式授权；
+Lumio 不上报这些 grants。Atlas attempt 和 Runner manifest 必须同时允许 Cookie、Artifact
+删除、Vortex 读写或 Atlas control 写入等权限。
 
 - `/atlas:enqueue <Bilibili URL>`：先在 Atlas 幂等创建 Source，再排队执行摘要 Run。
-- `chrome-extension/atlas-capture`：以 unpacked extension 安装后点击 `Send to Atlas`；扩展不持有 Atlas 凭据，只向 `127.0.0.1:43119` 的 Lumio bridge 发送标题、canonical URL 与 Markdown。正文不会进入 Run input 或 output，而是先写入内容寻址的 extraction Artifact，再由当前 node 的 `web-summary-v1` executor 生成 summary Resource。
+- `chrome-extension/atlas-capture`：以 unpacked extension 安装后点击 `Send to Atlas`；扩展不持有 Atlas 凭据，只向 `127.0.0.1:43119` 的 Lumio bridge 发送标题、canonical URL 与 Markdown。正文先写入内容寻址的 extraction Artifact，再触发 `web.summary@1`，由 AtlasRunner 生成 summary Resource。
 - Pi 会在 Atlas 注册成功后自动 reconciliation：读取全部 summary Resource，校验 Artifact hash，投影 `pending`/`reviewed` 卡片，并移除 `dismissed` 卡片。内容无变化时不会改写文件。
 - `/atlas:reconcile`：手动执行同一套全量 reconciliation，并报告 created、updated、removed、unchanged 和 failed 数量。
 - `/atlas:comment <resource_id>`：本地创建稳定路径的空白 `Knowledge/Comments/<resource_id>.md`，连续打开 Resource 与 Comment；此时 Resource 仍为 `pending`。

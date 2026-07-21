@@ -9,7 +9,7 @@ import {
   type KnowledgeCommentDraft,
   type ResourceCardProjection,
 } from "./obsidian";
-import type { ArtifactRef, HandlerResult, RunRecord } from "./work";
+import type { ArtifactRef } from "./contracts";
 
 export interface AtlasResourceBundle {
   resource: AtlasResourceRecord;
@@ -215,91 +215,4 @@ export async function completeResourceComment(
     vaultPath,
   );
   return { resource: completed.data.resource, comment: completed.data.comment, projection };
-}
-
-export async function vortexCommentSyncHandler(
-  run: RunRecord,
-  _signal: AbortSignal,
-  client: ReviewClient,
-): Promise<HandlerResult> {
-  const resourceId = typeof run.input.resource_id === "string" ? run.input.resource_id.trim() : "";
-  if (!resourceId) {
-    return { status: "failure", code: "invalid_input", message: "Missing required field: resource_id", retryable: false };
-  }
-  try {
-    const result = await completeResourceComment(client, resourceId);
-    return {
-      status: "success",
-      output: {
-        resource_id: result.resource.resource_id,
-        review_status: result.resource.review_status,
-        comment_id: result.comment.comment_id,
-        content_hash: result.comment.content_hash,
-        card_projection: result.projection?.action ?? null,
-      },
-      artifacts: [],
-      source_updates: [],
-      resources: [],
-    };
-  } catch (error) {
-    if (error instanceof ResourceCommentError) {
-      return { status: "failure", code: error.code, message: error.message, retryable: error.retryable };
-    }
-    return {
-      status: "failure",
-      code: "comment_sync_failed",
-      message: error instanceof Error ? error.message.slice(0, 240) : "Comment sync failed",
-      retryable: true,
-    };
-  }
-}
-
-export async function vortexCommentHandler(
-  run: RunRecord,
-  signal: AbortSignal,
-  client: ReviewClient,
-): Promise<HandlerResult> {
-  const resourceId = run.input.resource_id;
-  if (typeof resourceId !== "string" || !resourceId.trim()) {
-    return {
-      status: "failure",
-      code: "invalid_input",
-      message: "Missing required field: resource_id",
-      retryable: false,
-    };
-  }
-
-  try {
-    const result = await createResourceComment(client, resourceId.trim(), { signal });
-    return {
-      status: "success",
-      output: {
-        resource_id: result.resource.resource_id,
-        source_id: result.source.source_id,
-        review_status: "pending",
-        note_id: result.draft.note_id,
-        note_uri: result.draft.uri,
-        note_created: result.draft.created,
-        card_projection: result.projection?.action ?? null,
-      },
-      artifacts: [],
-      source_updates: [],
-      resources: [],
-    };
-  } catch (error) {
-    if (error instanceof ResourceCommentError) {
-      return {
-        status: "failure",
-        code: error.code,
-        message: error.message,
-        retryable: error.retryable,
-      };
-    }
-    return {
-      status: "failure",
-      code: "comment_setup_failed",
-      message: "Unexpected failure while setting up the Knowledge Comment",
-      retryable: true,
-    };
-  }
 }
