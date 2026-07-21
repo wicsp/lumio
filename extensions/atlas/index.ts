@@ -32,11 +32,6 @@ import {
   type HandlerResult,
   type HandlerSuccess,
 } from "./work";
-import {
-  bilibiliAcquireHandler,
-  bilibiliWorkflowSummaryHandler,
-  extractBvid,
-} from "./jobs/bilibili";
 import { webSummaryHandler } from "./jobs/web";
 import {
   configuredVaultPath,
@@ -48,7 +43,7 @@ import {
   type AtlasResourceRecord,
   type AtlasSourceRecord,
 } from "./obsidian";
-import { createPiBilibiliSummaryGenerator, createPiWebSummaryGenerator } from "./summarize";
+import { createPiWebSummaryGenerator } from "./summarize";
 import {
   completeResourceComment,
   createResourceComment,
@@ -411,13 +406,7 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
 
 export default function atlasExtension(pi: ExtensionAPI) {
   // ── Register job handlers ────────────────────────────────────
-  const summarize = createPiBilibiliSummaryGenerator(() => summaryRuntime);
   const summarizeWeb = createPiWebSummaryGenerator(() => summaryRuntime);
-  registerJobHandler("bilibili.summary@5:acquire", bilibiliAcquireHandler);
-  registerJobHandler(
-    "bilibili.summary@5:summarize",
-    (run, signal) => bilibiliWorkflowSummaryHandler(run, signal, summarize),
-  );
   registerLegacyJobHandler(
     "web-summary-v1",
     (run, signal) => webSummaryHandler(run, signal, summarizeWeb),
@@ -467,7 +456,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
         return;
       }
 
-      const bvid = extractBvid(url);
+      const bvid = url.match(/BV[a-zA-Z0-9]{10}/)?.[0] ?? null;
       if (!bvid) {
         ctx.ui.notify("Invalid B站 URL — must contain a BV号 (e.g. BV1xx411c7mD).", "warning");
         return;

@@ -11,7 +11,7 @@ import {
   relevantComments,
   renderComparisonMarkdown,
 } from "../extensions/atlas/comparison";
-import { storeSummaryArtifact } from "../extensions/atlas/jobs/bilibili";
+import { storeSummaryArtifact } from "../extensions/atlas/artifacts";
 import type { AtlasResourceRecord, AtlasSourceRecord } from "../extensions/atlas/obsidian";
 import type { PiSummaryRuntime } from "../extensions/atlas/summarize";
 import type { ArtifactRef, RunRecord } from "../extensions/atlas/work";

@@ -22,7 +22,7 @@ test("agent identity is one Lumio executor using Pi's real session instance", ()
   );
 });
 
-test("headless queue registers Pi as an executor on a node runner", () => {
+test("Lumio registers only its interaction adapter, not a generic Pi executor", () => {
   const previous = process.env.LUMIO_AGENT_MODE;
   process.env.LUMIO_AGENT_MODE = "background";
   try {
@@ -35,7 +35,7 @@ test("headless queue registers Pi as an executor on a node runner", () => {
       "nightly",
     );
     assert.equal(registration.node.node_id, "macsp");
-    assert.equal(registration.executors[0]?.name, "pi");
+    assert.equal(registration.executors[0]?.name, "lumio-interactive");
     assert.equal(registration.metadata.runner_mode, "background");
     assert.deepEqual(registration.legacy_capabilities, ["bilibili-summary-v4"]);
   } finally {

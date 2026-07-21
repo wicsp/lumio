@@ -79,3 +79,36 @@ export function createResourceId(
     .digest("hex");
   return `res_${digest.slice(0, 32)}`;
 }
+
+export function storeTranscriptArtifact(path: string, bvid: string): ArtifactRefCreate {
+  return storeTextArtifact(
+    readFileSync(path, "utf-8"),
+    "transcripts",
+    bvid,
+    `transcript-${bvid}`,
+    ".txt",
+    "text/plain; charset=utf-8",
+  );
+}
+
+export function storeSummaryArtifact(markdown: string, identity: string): ArtifactRefCreate {
+  return storeTextArtifact(
+    markdown,
+    join("resources", "bilibili"),
+    identity,
+    `summary-${identity}`,
+    ".md",
+    "text/markdown; charset=utf-8",
+  );
+}
+
+export function storeComparisonArtifact(markdown: string, sourceId: string): ArtifactRefCreate {
+  return storeTextArtifact(
+    markdown,
+    join("resources", "comparisons"),
+    sourceId,
+    `comparison-${sourceId}`,
+    ".md",
+    "text/markdown; charset=utf-8",
+  );
+}

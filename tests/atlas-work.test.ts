@@ -155,7 +155,7 @@ test("transcript artifacts are content-addressed and private", async () => {
   writeFileSync(source, "trusted transcript\n", "utf-8");
   process.env.ATLAS_ARTIFACT_ROOT = root;
 
-  const { storeTranscriptArtifact } = await import("../extensions/atlas/jobs/bilibili");
+  const { storeTranscriptArtifact } = await import("../extensions/atlas/artifacts");
   const artifact = storeTranscriptArtifact(source, "BV1234567890");
   const path = artifact.uri.replace(/^file:\/\//, "");
 

@@ -156,8 +156,7 @@ export function buildRunnerRegistration(
       labels: parseList(process.env.ATLAS_NODE_LABELS),
     },
     executors: [
-      { name: "pi", kind: "agent", version: _piVersion() },
-      { name: "script", kind: "script", version: _lumioVersion() },
+      { name: "lumio-interactive", kind: "agent", version: _lumioVersion() },
     ],
     available_grants: configuredRunnerGrants(),
     legacy_capabilities: legacyCapabilities,
@@ -178,26 +177,6 @@ function parseList(value: string | undefined): string[] {
 
 export function configuredRunnerGrants(): string[] {
   return parseList(process.env.ATLAS_RUNNER_GRANTS);
-}
-
-function _piVersion(): string {
-  try {
-    const path = require("node:path");
-    const fs = require("node:fs");
-    const mod = require.resolve("@earendil-works/pi-coding-agent");
-    let dir = path.dirname(mod);
-    for (let i = 0; i < 5; i++) {
-      const pkgPath = path.join(dir, "package.json");
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { version: string };
-        return pkg.version ?? "unknown";
-      }
-      dir = path.dirname(dir);
-    }
-    return "unknown";
-  } catch {
-    return "unknown";
-  }
 }
 
 function _lumioVersion(): string {

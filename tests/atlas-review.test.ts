@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { AtlasClient } from "../extensions/atlas/client";
-import { storeSummaryArtifact } from "../extensions/atlas/jobs/bilibili";
+import { storeSummaryArtifact } from "../extensions/atlas/artifacts";
 import type {
   AtlasResourceRecord,
   AtlasSourceRecord,

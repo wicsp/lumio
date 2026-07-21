@@ -7,7 +7,7 @@ import test from "node:test";
 import {
   createResourceId,
   storeSummaryArtifact,
-} from "../extensions/atlas/jobs/bilibili";
+} from "../extensions/atlas/artifacts";
 import {
   createKnowledgeCommentDraft,
   ensureVaultStructure,

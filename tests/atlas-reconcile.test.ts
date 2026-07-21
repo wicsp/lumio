@@ -9,7 +9,7 @@ import {
   ATLAS_WORK_POLL_INTERVAL_MS,
   reconcileResourceCards,
 } from "../extensions/atlas/index";
-import { storeSummaryArtifact } from "../extensions/atlas/jobs/bilibili";
+import { storeSummaryArtifact } from "../extensions/atlas/artifacts";
 import type {
   AtlasResourceRecord,
   AtlasSourceRecord,

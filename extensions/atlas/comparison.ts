@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { UserMessage } from "@earendil-works/pi-ai";
 
 import type { AtlasClient } from "./client";
-import { createResourceId, storeComparisonArtifact } from "./jobs/bilibili";
+import { createResourceId, storeComparisonArtifact } from "./artifacts";
 import { extractHumanCommentProse } from "./obsidian";
 import { fetchResourceBundle, type AtlasCommentRecord } from "./resource-review";
 import type { PiSummaryRuntime } from "./summarize";
