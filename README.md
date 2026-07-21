@@ -96,8 +96,8 @@ Lumio 不上报这些 grants。Atlas attempt 和 Runner manifest 必须同时允
 - `chrome-extension/atlas-capture`：以 unpacked extension 安装后点击 `Send to Atlas`；扩展不持有 Atlas 凭据，只向 `127.0.0.1:43119` 的 Lumio bridge 发送标题、canonical URL 与 Markdown。正文先写入内容寻址的 extraction Artifact，再触发 `web.summary@1`，由 AtlasRunner 生成 summary Resource。
 - Pi 会在 Atlas 注册成功后自动 reconciliation：读取全部 summary Resource，校验 Artifact hash，投影 `pending`/`reviewed` 卡片，并移除 `dismissed` 卡片。内容无变化时不会改写文件。
 - `/atlas:reconcile`：手动执行同一套全量 reconciliation，并报告 created、updated、removed、unchanged 和 failed 数量。
-- `/atlas:comment <resource_id>`：本地创建稳定路径的空白 `Knowledge/Comments/<resource_id>.md`，连续打开 Resource 与 Comment；此时 Resource 仍为 `pending`。
-- `/atlas:complete-comment <resource_id>`：人工写完后读取并校验本地 Markdown，上传到 Atlas；Atlas 原子保存 Comment 与 KnowledgeRef、将 Resource 标为 `reviewed`，再刷新卡片状态。
+- Resource 阅读与评论现在直接在 Atlas Console 完成；Comment 与审阅状态以 Atlas 为准，不要求安装或打开 Obsidian。
+- Vortex reconciliation、digest 与 audit 是可选知识库投影，只在配置 `ATLAS_OBSIDIAN_VAULT` 时运行，不参与任务完成条件。
 - Atlas Console 的 `写评论` 直接通过 Obsidian URI 本地创建并打开草稿；`完成评论` 排队 `vortex-comment-sync-v1`，由在线 Lumio 读取本地草稿并同步到 Atlas。
 - `/atlas:dismiss <resource_id>`：将没有 KnowledgeRef 的 Resource 标为 `dismissed`，并只删除可重建的 Resource Card。
 - `/atlas:restore <resource_id>`：将 dismissed Resource 恢复为 `pending`，并重建 Resource Card。

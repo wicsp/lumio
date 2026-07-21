@@ -26,15 +26,12 @@ import {
   configuredVaultPath,
   ensureVaultStructure,
   removeResourceCard,
-  resourceCardUri,
   type ResourceCardProjection,
   type ResourceCardRemoval,
   type AtlasResourceRecord,
   type AtlasSourceRecord,
 } from "./obsidian";
 import {
-  completeResourceComment,
-  createResourceComment,
   fetchResourceBundle,
   projectResourceBundle,
   type AtlasResourceBundle,
@@ -332,63 +329,6 @@ export default function atlasExtension(pi: ExtensionAPI) {
       } catch (err) {
         ctx.ui.notify(
           `Atlas reconciliation failed: ${err instanceof Error ? err.message : String(err)}`,
-          "warning",
-        );
-      }
-    },
-  });
-
-  pi.registerCommand("atlas:comment", {
-    description: "Create and open a local Knowledge Comment draft; keep the Resource pending",
-    handler: async (args, ctx) => {
-      const resourceId = args.trim();
-      if (!resourceId) {
-        ctx.ui.notify("Usage: /atlas:comment <resource_id>", "warning");
-        return;
-      }
-      const vaultPath = configuredVaultPath();
-      if (!client || !vaultPath) {
-        ctx.ui.notify("Atlas or ATLAS_OBSIDIAN_VAULT is not configured.", "warning");
-        return;
-      }
-      try {
-        const result = await createResourceComment(client, resourceId, { vaultPath });
-        await pi.exec("open", [resourceCardUri(vaultPath, resourceId)], { timeout: 5_000 });
-        await pi.exec("open", [result.draft.uri], { timeout: 5_000 });
-        ctx.ui.notify(
-          `${result.draft.created ? "Created" : "Opened existing"} ${result.draft.relative_path}; Resource remains pending until /atlas:complete-comment ${resourceId}.`,
-          "info",
-        );
-      } catch (err) {
-        ctx.ui.notify(
-          `Atlas comment setup failed: ${err instanceof Error ? err.message : String(err)}`,
-          "warning",
-        );
-      }
-    },
-  });
-
-  pi.registerCommand("atlas:complete-comment", {
-    description: "Upload a finished local Knowledge Comment to Atlas and mark its Resource reviewed",
-    handler: async (args, ctx) => {
-      const resourceId = args.trim();
-      if (!resourceId) {
-        ctx.ui.notify("Usage: /atlas:complete-comment <resource_id>", "warning");
-        return;
-      }
-      if (!client) {
-        ctx.ui.notify("Atlas is not connected.", "warning");
-        return;
-      }
-      try {
-        const result = await completeResourceComment(client, resourceId);
-        ctx.ui.notify(
-          `Atlas: synced ${result.comment.comment_id}; ${resourceId} reviewed${result.projection ? `; Resource Card ${result.projection.action}` : ""}.`,
-          "info",
-        );
-      } catch (err) {
-        ctx.ui.notify(
-          `Atlas comment completion failed: ${err instanceof Error ? err.message : String(err)}`,
           "warning",
         );
       }
