@@ -22,7 +22,7 @@ import atlas_queue
 SCRIPT_DIR = Path(__file__).resolve().parent
 LUMIO_ROOT = SCRIPT_DIR.parents[2]
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-ACTIVE_STATUSES = {"pending", "claimed"}
+ACTIVE_STATUSES = {"blocked", "pending", "claimed"}
 
 
 class ControllerError(RuntimeError):
@@ -106,23 +106,21 @@ class AtlasControlClient:
 
     def enqueue(self, source: dict[str, Any], bvid: str) -> dict[str, Any]:
         url = f"https://www.bilibili.com/video/{bvid}"
-        return self.request(
+        invocation = self.request(
             "POST",
-            "/api/runs/enqueue",
+            "/api/workflow-invocations",
             {
-                "project_id": "bilibili-capture",
-                "job_name": "bilibili-summary-v4",
-                "capabilities_required": ["bilibili-summary-v4"],
+                "workflow_name": "bilibili.summary",
+                "workflow_version": "5",
                 "input": {
                     "url": url,
                     "canonical_url": url,
                     "source_id": source["source_id"],
                 },
-                "priority": 5,
-                "max_attempts": 1,
-                "metadata": {"origin": "bilibili-atlas-favorites-nightly"},
             },
         )
+        run_id = invocation["step_runs"]["summarize"]
+        return self.run(run_id)
 
 
 class HeadlessPiWorker:
@@ -199,8 +197,18 @@ def _matching_runs(runs: list[dict[str, Any]], source_id: str) -> list[dict[str,
     return [
         run
         for run in runs
-        if run.get("job_name") == "bilibili-summary-v4"
-        and (run.get("input") or {}).get("source_id") == source_id
+        if (
+            (
+                run.get("job_name") == "bilibili-summary-v4"
+                and (run.get("input") or {}).get("source_id") == source_id
+            )
+            or (
+                (run.get("workflow") or {}).get("name") == "bilibili.summary"
+                and run.get("step_name") == "summarize"
+                and ((run.get("input") or {}).get("workflow_input") or {}).get("source_id")
+                == source_id
+            )
+        )
     ]
 
 

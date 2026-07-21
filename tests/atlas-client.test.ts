@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   createClient,
-  buildMetadata,
+  buildRunnerRegistration,
   generateAgentId,
   generateAgentName,
   type AtlasConfig,
@@ -22,38 +22,41 @@ test("agent identity is one Lumio executor using Pi's real session instance", ()
   );
 });
 
-test("headless queue executor is visible as one background Lumio agent", () => {
+test("headless queue registers Pi as an executor on a node runner", () => {
   const previous = process.env.LUMIO_AGENT_MODE;
   process.env.LUMIO_AGENT_MODE = "background";
   try {
     assert.equal(generateAgentName(config), "Lumio background pi on macsp");
-    const metadata = buildMetadata(config, "nightly");
-    assert.equal(metadata.agent_kind, "background");
-    assert.equal(metadata.interactive, false);
-    assert.equal(metadata.executor, "lumio");
-    assert.equal(metadata.runtime, "pi");
+    const registration = buildRunnerRegistration(
+      config,
+      "macsp.lumio.nightly",
+      generateAgentName(config),
+      ["bilibili-summary-v4"],
+      "nightly",
+    );
+    assert.equal(registration.node.node_id, "macsp");
+    assert.equal(registration.executors[0]?.name, "pi");
+    assert.equal(registration.metadata.runner_mode, "background");
+    assert.deepEqual(registration.legacy_capabilities, ["bilibili-summary-v4"]);
   } finally {
     if (previous === undefined) delete process.env.LUMIO_AGENT_MODE;
     else process.env.LUMIO_AGENT_MODE = previous;
   }
 });
 
-test("Lumio refuses an Atlas server that does not acknowledge v3", async () => {
+test("Lumio refuses an Atlas server that does not acknowledge runner v1", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => Response.json({
-    agent_id: "macsp.lumio.test",
+    runner_id: "macsp.lumio.test",
     scoped_token: "at2_secret",
-    protocol_version: "atlas-agent-v2",
+    protocol_version: "atlas-agent-v3",
   });
 
   try {
     const client = createClient(config, "test-session");
-    const result = await client.register({
-      agent_id: client.agentId,
-      name: "test",
-      capabilities: [],
-      metadata: { protocol_version: "atlas-agent-v3" },
-    });
+    const result = await client.register(
+      buildRunnerRegistration(config, client.agentId, "test", []),
+    );
     assert.equal(result.ok, false);
     assert.equal(client.scopedToken, null);
     if (!result.ok) assert.match(result.error, /protocol mismatch/);
@@ -62,22 +65,19 @@ test("Lumio refuses an Atlas server that does not acknowledge v3", async () => {
   }
 });
 
-test("Lumio accepts v3 registration and stores only the scoped work credential", async () => {
+test("Lumio accepts runner v1 registration and stores only the scoped work credential", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => Response.json({
-    agent_id: "macsp.lumio.testsession",
+    runner_id: "macsp.lumio.testsession",
     scoped_token: "at2_scoped-secret",
-    protocol_version: "atlas-agent-v3",
+    protocol_version: "atlas-runner-v1",
   });
 
   try {
     const client = createClient(config, "test-session");
-    const result = await client.register({
-      agent_id: client.agentId,
-      name: "test",
-      capabilities: ["bilibili-summary"],
-      metadata: { protocol_version: "atlas-agent-v3" },
-    });
+    const result = await client.register(
+      buildRunnerRegistration(config, client.agentId, "test", ["bilibili-summary-v4"]),
+    );
     assert.equal(result.ok, true);
     assert.equal(client.agentId, "macsp.lumio.testsession");
     assert.equal(client.scopedToken, "at2_scoped-secret");

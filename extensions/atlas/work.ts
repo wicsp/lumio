@@ -103,13 +103,31 @@ export interface RunRecord {
   capabilities_required: string[];
   input: Record<string, unknown>;
   output: Record<string, unknown> | null;
-  status: "pending" | "claimed" | "completed" | "failed" | "cancelled";
+  status: "blocked" | "pending" | "claimed" | "completed" | "failed" | "cancelled";
   agent_id: string | null;
   lease_expires_at: string | null;
   attempt_number: number;
   max_attempts: number;
   priority: number;
   metadata: Record<string, unknown>;
+  workflow?: {
+    name: string;
+    version: string;
+    digest?: string | null;
+  } | null;
+  step_name?: string | null;
+  requirements?: {
+    node_ids: string[];
+    executors: string[];
+    node_labels: string[];
+    grants: string[];
+  };
+  workflow_invocation_id?: string | null;
+  depends_on_run_ids?: string[];
+  execution_context?: Record<string, {
+    output: Record<string, unknown>;
+    artifacts: ArtifactRef[];
+  }>;
   error_message: string | null;
   created_at: string;
   started_at: string | null;

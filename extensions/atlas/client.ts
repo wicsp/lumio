@@ -20,17 +20,41 @@ export interface AtlasConfig {
   nodeId: string;
 }
 
-export interface AtlasAgentRegistration {
-  agent_id: string;
+export interface AtlasRunnerRegistration {
+  runner_id: string;
   name: string;
-  capabilities: string[];
+  node: {
+    node_id: string;
+    os?: string;
+    arch?: string;
+    labels: string[];
+  };
+  executors: Array<{
+    name: string;
+    kind: "agent" | "script" | "process";
+    version?: string;
+  }>;
+  available_grants: string[];
+  legacy_capabilities: string[];
   metadata: Record<string, unknown>;
 }
 
-export interface AtlasAgentRegistrationResponse {
-  agent_id: string;
+export interface AtlasRunnerRegistrationResponse {
+  runner_id: string;
   scoped_token: string;
   protocol_version: string;
+}
+
+export interface AtlasRunnerRecord {
+  runner_id: string;
+  name: string | null;
+  node: AtlasRunnerRegistration["node"];
+  executors: AtlasRunnerRegistration["executors"];
+  available_grants: string[];
+  metadata: Record<string, unknown>;
+  registered_at: string;
+  last_seen_at: string;
+  online: boolean;
 }
 
 export interface AtlasAgentRecord {
@@ -113,24 +137,47 @@ export function generateAgentName(config: AtlasConfig): string {
 
 // ─── Metadata ────────────────────────────────────────────────────────
 
-/** Build the registration metadata payload per RFC 0001. */
-export function buildMetadata(
+/** Build a runtime-neutral runner registration; job names are legacy-only routing data. */
+export function buildRunnerRegistration(
   config: AtlasConfig,
+  runnerId: string,
+  name: string,
+  legacyCapabilities: string[],
   instanceId?: string,
-): Record<string, unknown> {
+): AtlasRunnerRegistration {
   const background = process.env.LUMIO_AGENT_MODE === "background";
   return {
-    node_id: config.nodeId,
-    agent_kind: background ? "background" : "interactive",
-    executor: "lumio",
-    runtime: "pi",
-    instance_id: instanceId ?? null,
-    runtime_version: _piVersion(),
-    lumio_version: _lumioVersion(),
-    git_revision: _lumioRevision(),
-    protocol_version: "atlas-agent-v3",
-    interactive: !background,
+    runner_id: runnerId,
+    name,
+    node: {
+      node_id: config.nodeId,
+      os: process.platform,
+      arch: process.arch,
+      labels: parseList(process.env.ATLAS_NODE_LABELS),
+    },
+    executors: [
+      { name: "pi", kind: "agent", version: _piVersion() },
+      { name: "script", kind: "script", version: _lumioVersion() },
+    ],
+    available_grants: configuredRunnerGrants(),
+    legacy_capabilities: legacyCapabilities,
+    metadata: {
+      distribution: "lumio",
+      distribution_version: _lumioVersion(),
+      distribution_revision: _lumioRevision(),
+      runner_mode: background ? "background" : "interactive",
+      instance_id: instanceId ?? null,
+    },
   };
+}
+
+function parseList(value: string | undefined): string[] {
+  if (!value) return [];
+  return Array.from(new Set(value.split(",").map((item) => item.trim()).filter(Boolean)));
+}
+
+export function configuredRunnerGrants(): string[] {
+  return parseList(process.env.ATLAS_RUNNER_GRANTS);
 }
 
 function _piVersion(): string {
@@ -303,7 +350,7 @@ export interface AtlasClient {
    * Register this session as an agent.
    * Returns the registration response including a scoped token for work operations.
    */
-  register(payload: AtlasAgentRegistration): Promise<
+  register(payload: AtlasRunnerRegistration): Promise<
     { ok: true; data: AtlasAgentRecord } | { ok: false; error: string }
   >;
 
@@ -358,29 +405,29 @@ class AtlasHttpClient implements AtlasClient {
     }
   }
 
-  async register(payload: AtlasAgentRegistration) {
-    const result = await atlasRequest<AtlasAgentRegistrationResponse>(
+  async register(payload: AtlasRunnerRegistration) {
+    const result = await atlasRequest<AtlasRunnerRegistrationResponse>(
       this.config,
-      "/api/agents/register",
+      "/api/runners/register",
       "POST",
       payload,
     );
     if (result.ok) {
       const regResp = result.data;
-      if (regResp.protocol_version !== "atlas-agent-v3") {
-        const error = `Atlas protocol mismatch: expected atlas-agent-v3, received ${regResp.protocol_version || "unknown"}`;
+      if (regResp.protocol_version !== "atlas-runner-v1") {
+        const error = `Atlas protocol mismatch: expected atlas-runner-v1, received ${regResp.protocol_version || "unknown"}`;
         this._disconnectedReason = error;
         return { ok: false, error };
       }
-      this.agentId = regResp.agent_id;
+      this.agentId = regResp.runner_id;
       // Store the scoped token for subsequent work operations.
       if (regResp.scoped_token) {
         this.scopedToken = regResp.scoped_token;
       }
       this._lastAgent = {
-        agent_id: regResp.agent_id,
+        agent_id: regResp.runner_id,
         name: payload.name,
-        capabilities: payload.capabilities,
+        capabilities: payload.legacy_capabilities,
         metadata: payload.metadata,
         registered_at: new Date().toISOString(),
         last_seen_at: new Date().toISOString(),
@@ -395,21 +442,31 @@ class AtlasHttpClient implements AtlasClient {
   }
 
   async heartbeat() {
-    const result = await atlasRequest<AtlasAgentRecord>(
+    const result = await atlasRequest<AtlasRunnerRecord>(
       this.config,
-      `/api/agents/${encodeURIComponent(this.agentId)}/heartbeat`,
+      `/api/runners/${encodeURIComponent(this.agentId)}/heartbeat`,
       "POST",
       undefined,
       DEFAULT_TIMEOUT_MS,
       2, // fewer retries for heartbeat
     );
     if (result.ok) {
-      this._lastAgent = result.data;
+      this._lastAgent = {
+        agent_id: result.data.runner_id,
+        name: result.data.name,
+        capabilities: this._lastAgent?.capabilities ?? [],
+        metadata: result.data.metadata,
+        registered_at: result.data.registered_at,
+        last_seen_at: result.data.last_seen_at,
+        online: result.data.online,
+      };
       this._disconnectedReason = null;
     } else {
       this._disconnectedReason = result.error;
     }
-    return result;
+    return result.ok
+      ? { ok: true as const, data: this._lastAgent! }
+      : result;
   }
 
   async status(): Promise<AtlasClientStatus> {

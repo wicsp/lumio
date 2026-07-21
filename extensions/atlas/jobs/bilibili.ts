@@ -9,16 +9,19 @@
  */
 
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   unlinkSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   ArtifactRefCreate,
   HandlerResult,
@@ -26,6 +29,7 @@ import type {
   RunRecord,
 } from "../work";
 import {
+  artifactRoot,
   createResourceId,
   requiredChecksum,
   storeTextArtifact,
@@ -154,6 +158,7 @@ export interface BilibiliRunOutput {
   asr_model?: string;
   /** 0 = no transcript; 1 = transcript fetched; 2 = transcript + AI summary */
   processing_level: number;
+  transcript_resource_id?: string;
 }
 
 export interface BilibiliSummaryRequest {
@@ -1059,6 +1064,197 @@ export async function bilibiliSummaryHandler(
       },
     ],
   };
+}
+
+/** Workflow v5 acquisition step: deterministic/local work only, with no model dependency. */
+export async function bilibiliAcquireHandler(
+  run: RunRecord,
+  signal: AbortSignal,
+  acquire: BilibiliTranscriptAcquirer = acquireBilibiliTranscript,
+): Promise<HandlerResult> {
+  const wrapped = run.input as { workflow_input?: BilibiliRunInput };
+  const input = wrapped.workflow_input ?? run.input as unknown as BilibiliRunInput;
+  const url = input?.url;
+  const sourceId = input?.source_id?.trim();
+  if (!url || !sourceId) {
+    return {
+      status: "failure",
+      code: "invalid_input",
+      message: "Bilibili workflow requires url and source_id",
+      retryable: false,
+    };
+  }
+  const bvid = extractBvid(url);
+  if (!bvid) {
+    return {
+      status: "failure",
+      code: "invalid_input",
+      message: `Cannot extract BV号 from URL: ${url}`,
+      retryable: false,
+    };
+  }
+  const canonicalUrl = input.canonical_url?.trim()
+    || `https://www.bilibili.com/video/${bvid}`;
+  const acquisition = await acquire({
+    bvid,
+    url,
+    canonicalUrl,
+    browser: input.cookie_browser ?? COOKIE_BROWSER,
+    language: input.lang ?? "ai-zh",
+  }, signal);
+  if (acquisition.status === "failure") return acquisition;
+
+  const transcript = acquisition.transcript.text.trim();
+  if (!transcript) {
+    return {
+      status: "failure",
+      code: "empty_transcript",
+      message: `Transcript for ${bvid} is empty`,
+      retryable: false,
+    };
+  }
+  const transcriptArtifact = storeTranscriptTextArtifact(`${transcript}\n`, bvid);
+  const transcriptHash = requiredChecksum(transcriptArtifact);
+  const transcriptResourceId = createResourceId(sourceId, "transcript", transcriptHash);
+  const info = acquisition.info;
+  const title = boundedText(info?.title || bvid, 1000);
+  const description = boundedText(info?.description ?? "", 5000);
+  const output: BilibiliRunOutput = {
+    bvid,
+    url: canonicalUrl,
+    title,
+    description,
+    duration_seconds: info?.duration_seconds ?? null,
+    duration_text: info?.duration_text ?? "",
+    cover_url: info?.cover_url ?? "",
+    page_count: info?.page_count ?? 1,
+    transcript_length: transcriptArtifact.size_bytes ?? Buffer.byteLength(transcript),
+    transcript_acquisition_mode: acquisition.transcript.mode,
+    transcript_language: acquisition.transcript.language,
+    processing_level: 1,
+    transcript_resource_id: transcriptResourceId,
+  };
+  return {
+    status: "success",
+    output: output as unknown as Record<string, unknown>,
+    artifacts: [transcriptArtifact],
+    source_updates: [{
+      source_id: sourceId,
+      canonical_uri: canonicalUrl,
+      title,
+      external_ids: { bvid },
+      metadata: {
+        description,
+        duration_seconds: info?.duration_seconds ?? null,
+        cover_url: info?.cover_url ?? "",
+        transcript_acquisition_mode: acquisition.transcript.mode,
+      },
+    }],
+    resources: [{
+      resource_id: transcriptResourceId,
+      source_id: sourceId,
+      kind: "transcript",
+      title: `${title} — transcript`,
+      artifact_name: transcriptArtifact.name,
+      content_hash: transcriptHash,
+      generator: acquisition.transcript.generator,
+      metadata: {
+        profile_id: "bilibili-transcript-v1",
+        ...acquisition.transcript.metadata,
+        acquisition_mode: acquisition.transcript.mode,
+        language: acquisition.transcript.language,
+      },
+    }],
+  };
+}
+
+/** Workflow v5 agent step: consumes the verified transcript from the acquisition Attempt. */
+export async function bilibiliWorkflowSummaryHandler(
+  run: RunRecord,
+  signal: AbortSignal,
+  summarize?: BilibiliSummaryGenerator,
+): Promise<HandlerResult> {
+  if (!summarize) {
+    return {
+      status: "failure",
+      code: "summary_model_unavailable",
+      message: "No Pi summary model is available for this session.",
+      retryable: true,
+    };
+  }
+  const upstream = Object.values(run.execution_context ?? {})[0];
+  const output = upstream?.output as unknown as BilibiliRunOutput | undefined;
+  const artifact = upstream?.artifacts.find((item) => item.name.startsWith("transcript-"));
+  if (!output || !artifact) {
+    return {
+      status: "failure",
+      code: "missing_upstream_transcript",
+      message: "Bilibili summarize step requires a completed acquisition transcript",
+      retryable: false,
+    };
+  }
+  let transcript: string;
+  try {
+    transcript = readVerifiedWorkflowTranscript(artifact);
+  } catch (error) {
+    return {
+      status: "failure",
+      code: "invalid_upstream_artifact",
+      message: error instanceof Error ? error.message : String(error),
+      retryable: false,
+    };
+  }
+  const result = await summarize({
+    bvid: output.bvid,
+    url: output.url,
+    title: output.title,
+    description: output.description,
+    transcript,
+  }, signal);
+  const markdown = result.markdown.trim();
+  if (!markdown) {
+    return { status: "failure", code: "empty_summary", message: "Empty summary", retryable: true };
+  }
+  const wrapped = run.input as { workflow_input?: BilibiliRunInput };
+  const input = wrapped.workflow_input ?? run.input as unknown as BilibiliRunInput;
+  const summaryArtifact = storeSummaryArtifact(`${markdown}\n`, output.bvid);
+  const summaryHash = requiredChecksum(summaryArtifact);
+  return {
+    status: "success",
+    output: { ...output, processing_level: 2 },
+    artifacts: [summaryArtifact],
+    source_updates: [],
+    resources: [{
+      resource_id: createResourceId(input.source_id, "summary", summaryHash),
+      source_id: input.source_id,
+      kind: "summary",
+      title: `${output.title} — AI summary`,
+      artifact_name: summaryArtifact.name,
+      content_hash: summaryHash,
+      generator: result.generator,
+      metadata: {
+        profile_id: "bilibili-overview-v1",
+        ...result.metadata,
+        transcript_resource_id: output.transcript_resource_id,
+        transcript_acquisition_mode: output.transcript_acquisition_mode,
+        transcript_language: output.transcript_language,
+      },
+    }],
+  };
+}
+
+function readVerifiedWorkflowTranscript(artifact: ArtifactRefCreate): string {
+  if (!artifact.uri.startsWith("file://")) throw new Error("Transcript must use file://");
+  const root = realpathSync(artifactRoot());
+  const path = realpathSync(fileURLToPath(artifact.uri));
+  if (path !== root && !path.startsWith(`${root}${sep}`)) {
+    throw new Error("Transcript is outside ATLAS_ARTIFACT_ROOT");
+  }
+  if (statSync(path).size > 8 * 1024 * 1024) throw new Error("Transcript exceeds 8 MiB");
+  const content = readFileSync(path, "utf-8");
+  const checksum = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+  if (checksum !== requiredChecksum(artifact)) throw new Error("Transcript checksum mismatch");
+  return content;
 }
 
 /** Extract BV号 from a B站 URL. */

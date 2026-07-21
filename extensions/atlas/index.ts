@@ -18,10 +18,11 @@ import {
   createClient,
   generateAgentId,
   generateAgentName,
-  buildMetadata,
+  buildRunnerRegistration,
+  configuredRunnerGrants,
   type AtlasClient,
   type AtlasClientStatus,
-  type AtlasAgentRegistration,
+  type AtlasRunnerRegistration,
 } from "./client";
 import {
   startWorkPoller,
@@ -31,7 +32,11 @@ import {
   type HandlerResult,
   type HandlerSuccess,
 } from "./work";
-import { bilibiliSummaryHandler, extractBvid } from "./jobs/bilibili";
+import {
+  bilibiliAcquireHandler,
+  bilibiliWorkflowSummaryHandler,
+  extractBvid,
+} from "./jobs/bilibili";
 import { webSummaryHandler } from "./jobs/web";
 import {
   configuredVaultPath,
@@ -75,7 +80,7 @@ const REGISTRATION_TIMEOUT_MS = 5_000;
 export const ATLAS_WORK_POLL_INTERVAL_MS = 2_000;
 
 function advertisedCapabilities(): string[] {
-  const capabilities = Array.from(jobHandlers.keys());
+  const capabilities = Array.from(legacyJobHandlers);
   const config = parseConfig();
   if (config) capabilities.push(webCaptureNodeCapability(config.nodeId));
   return capabilities;
@@ -120,6 +125,7 @@ const jobHandlers = new Map<
   string,
   (run: RunRecord, signal: AbortSignal) => Promise<HandlerResult>
 >();
+const legacyJobHandlers = new Set<string>();
 
 /** Register a job handler for a given job_name. */
 export function registerJobHandler(
@@ -127,6 +133,14 @@ export function registerJobHandler(
   handler: (run: RunRecord, signal: AbortSignal) => Promise<HandlerResult>,
 ) {
   jobHandlers.set(name, handler);
+}
+
+function registerLegacyJobHandler(
+  name: string,
+  handler: (run: RunRecord, signal: AbortSignal) => Promise<HandlerResult>,
+) {
+  registerJobHandler(name, handler);
+  legacyJobHandlers.add(name);
 }
 
 async function projectPublishedResources(
@@ -262,7 +276,22 @@ async function dispatchJob(
   run: RunRecord,
   signal: AbortSignal,
 ): Promise<HandlerResult> {
-  const handler = jobHandlers.get(run.job_name);
+  const requiredGrants = run.requirements?.grants ?? [];
+  const localGrants = new Set(configuredRunnerGrants());
+  const unavailable = requiredGrants.filter((grant) => !localGrants.has(grant));
+  if (unavailable.length > 0) {
+    return {
+      status: "failure",
+      code: "local_grant_unavailable",
+      message: `Runner lacks locally allowed grants: ${unavailable.join(", ")}`,
+      retryable: false,
+    };
+  }
+  const workflowKey = run.workflow && run.step_name
+    ? `${run.workflow.name}@${run.workflow.version}:${run.step_name}`
+    : null;
+  const handler = (workflowKey ? jobHandlers.get(workflowKey) : undefined)
+    ?? jobHandlers.get(run.job_name);
   if (handler) return handler(run, signal);
 
   // No handler registered — fail explicitly.
@@ -352,13 +381,13 @@ function formatStatus(status: AtlasClientStatus): string {
   if (status.agent) {
     const a = status.agent;
     lines.push(
-      `  agent: ${a.agent_id} · ${a.online ? "online" : "offline"} · last seen ${a.last_seen_at}`,
+      `  runner: ${a.agent_id} · ${a.online ? "online" : "offline"} · last seen ${a.last_seen_at}`,
     );
     if (a.capabilities.length > 0) {
-      lines.push(`  capabilities: ${a.capabilities.join(", ")}`);
+      lines.push(`  legacy handlers: ${a.capabilities.join(", ")}`);
     }
   } else {
-    lines.push("  agent: not registered");
+    lines.push("  runner: not registered");
   }
   return lines.join("\n");
 }
@@ -366,12 +395,13 @@ function formatStatus(status: AtlasClientStatus): string {
 // ─── Registration ────────────────────────────────────────────────────
 
 async function tryRegister(c: AtlasClient): Promise<boolean> {
-  const payload: AtlasAgentRegistration = {
-    agent_id: c.agentId,
-    name: generateAgentName(c.config),
-    capabilities: advertisedCapabilities(),
-    metadata: buildMetadata(c.config, c.agentId.split(".").at(-1)),
-  };
+  const payload: AtlasRunnerRegistration = buildRunnerRegistration(
+    c.config,
+    c.agentId,
+    generateAgentName(c.config),
+    advertisedCapabilities(),
+    c.agentId.split(".").at(-1),
+  );
 
   const result = await c.register(payload);
   return result.ok;
@@ -383,15 +413,16 @@ export default function atlasExtension(pi: ExtensionAPI) {
   // ── Register job handlers ────────────────────────────────────
   const summarize = createPiBilibiliSummaryGenerator(() => summaryRuntime);
   const summarizeWeb = createPiWebSummaryGenerator(() => summaryRuntime);
+  registerJobHandler("bilibili.summary@5:acquire", bilibiliAcquireHandler);
   registerJobHandler(
-    "bilibili-summary-v4",
-    (run, signal) => bilibiliSummaryHandler(run, signal, summarize),
+    "bilibili.summary@5:summarize",
+    (run, signal) => bilibiliWorkflowSummaryHandler(run, signal, summarize),
   );
-  registerJobHandler(
+  registerLegacyJobHandler(
     "web-summary-v1",
     (run, signal) => webSummaryHandler(run, signal, summarizeWeb),
   );
-  registerJobHandler("vortex-comment-v1", (run, signal) => {
+  registerLegacyJobHandler("vortex-comment-v1", (run, signal) => {
     const activeClient = client;
     if (!activeClient) {
       return Promise.resolve({
@@ -403,7 +434,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
     }
     return vortexCommentHandler(run, signal, activeClient);
   });
-  registerJobHandler("vortex-comment-sync-v1", (run, signal) => {
+  registerLegacyJobHandler("vortex-comment-sync-v1", (run, signal) => {
     const activeClient = client;
     if (!activeClient) {
       return Promise.resolve({
@@ -415,8 +446,8 @@ export default function atlasExtension(pi: ExtensionAPI) {
     }
     return vortexCommentSyncHandler(run, signal, activeClient);
   });
-  registerJobHandler("vortex-resource-purge-v1", vortexResourcePurgeHandler);
-  registerJobHandler(
+  registerLegacyJobHandler("vortex-resource-purge-v1", vortexResourcePurgeHandler);
+  registerLegacyJobHandler(
     "vortex-comparison-v1",
     createComparisonHandler(() => client, () => summaryRuntime),
   );
@@ -467,20 +498,21 @@ export default function atlasExtension(pi: ExtensionAPI) {
           description: "Inbox for B站 video URLs captured from Share Sheet.",
         });
 
-        const enqueued = await client.controlPost<RunRecord>("/api/runs/enqueue", {
-          project_id: "bilibili-capture",
-          job_name: "bilibili-summary-v4",
-          capabilities_required: ["bilibili-summary-v4"],
+        const enqueued = await client.controlPost<{
+          invocation_id: string;
+          step_runs: Record<string, string>;
+        }>("/api/workflow-invocations", {
+          workflow_name: "bilibili.summary",
+          workflow_version: "5",
           input: {
             url,
             canonical_url: canonicalUrl,
             source_id: source.data.source_id,
           },
-          priority: 5,
         });
         if (enqueued.ok) {
           ctx.ui.notify(
-            `Atlas: captured ${bvid} as ${source.data.source_id}; enqueued ${enqueued.data.run_id}.`,
+            `Atlas: captured ${bvid}; started workflow ${enqueued.data.invocation_id}.`,
             "info",
           );
         } else {

@@ -13,7 +13,9 @@ import test from "node:test";
 
 import {
   acquireBilibiliTranscript,
+  bilibiliAcquireHandler,
   bilibiliSummaryHandler,
+  bilibiliWorkflowSummaryHandler,
   runLocalAsr,
   type AcquiredTranscript,
   type BilibiliAcquisitionRequest,
@@ -249,4 +251,70 @@ test("v4 handler publishes bounded ASR provenance without transcript bytes in Ru
   const transcriptPath = result.artifacts[0].uri.replace(/^file:\/\//, "");
   assert.equal(readFileSync(transcriptPath, "utf-8"), `${secretTranscript}\n`);
   assert.equal(statSync(transcriptPath).mode & 0o777, 0o600);
+});
+
+test("workflow v5 separates transcript acquisition from agent summarization", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lumio-bili-v5-artifacts-"));
+  process.env.ATLAS_ARTIFACT_ROOT = root;
+  const acquisitionRun: RunRecord = {
+    ...runRecord(),
+    job_name: "acquire",
+    capabilities_required: [],
+    workflow: { name: "bilibili.summary", version: "5" },
+    step_name: "acquire",
+    input: { workflow_input: runRecord().input },
+  };
+  const acquired = await bilibiliAcquireHandler(
+    acquisitionRun,
+    new AbortController().signal,
+    async () => ({ status: "success", info, transcript: localTranscript("workflow transcript") }),
+  );
+  assert.equal(acquired.status, "success");
+  if (acquired.status !== "success") return;
+  assert.equal(acquired.resources.length, 1);
+  assert.equal(acquired.resources[0].kind, "transcript");
+
+  const summaryRun: RunRecord = {
+    ...runRecord(),
+    job_name: "summarize",
+    capabilities_required: [],
+    workflow: { name: "bilibili.summary", version: "5" },
+    step_name: "summarize",
+    input: { workflow_input: runRecord().input },
+    execution_context: {
+      [acquisitionRun.run_id]: {
+        output: acquired.output,
+        artifacts: acquired.artifacts.map((artifact, index) => ({
+          artifact_id: `art_${index}`,
+          run_id: acquisitionRun.run_id,
+          name: artifact.name,
+          uri: artifact.uri,
+          content_type: artifact.content_type ?? null,
+          size_bytes: artifact.size_bytes ?? null,
+          checksum: artifact.checksum ?? null,
+          created_at: new Date().toISOString(),
+        })),
+      },
+    },
+  };
+  const summarized = await bilibiliWorkflowSummaryHandler(
+    summaryRun,
+    new AbortController().signal,
+    async ({ transcript }) => {
+      assert.equal(transcript, "workflow transcript\n");
+      return {
+        markdown: "# Workflow summary",
+        generator: { mode: "ai", name: "test", version: "1" },
+        metadata: { chunk_count: 1 },
+      };
+    },
+  );
+  assert.equal(summarized.status, "success");
+  if (summarized.status !== "success") return;
+  assert.equal(summarized.resources.length, 1);
+  assert.equal(summarized.resources[0].kind, "summary");
+  assert.equal(
+    summarized.resources[0].metadata.transcript_resource_id,
+    acquired.resources[0].resource_id,
+  );
 });

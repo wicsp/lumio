@@ -85,6 +85,15 @@ pi -e <path-to-lumio>
 
 ### Atlas / Vortex 工作流
 
+Lumio 的 Atlas 集成现在通过 `atlas-runner-v1` 把当前 Pi 会话注册为一个 node-local Runner
+上的 `pi` executor。Atlas 负责工作流状态、调度、租约与结果接受；Lumio 只负责 Pi 运行时和
+本地 Vortex/Obsidian 适配。现有 handler 名暂时作为 `legacy_capabilities` 上报，供旧 Run
+兼容使用，不再作为 Pi 或 Lumio 的永久业务能力身份。
+
+需要本地受保护资源的 Workflow 必须通过 `ATLAS_RUNNER_GRANTS` 显式授权。例如当前
+Bilibili acquisition step 需要 `ATLAS_RUNNER_GRANTS=bilibili-cookie:read`；仅仅运行在
+macsp 或安装了浏览器并不会自动授予 Cookie 读取权限。
+
 - `/atlas:enqueue <Bilibili URL>`：先在 Atlas 幂等创建 Source，再排队执行摘要 Run。
 - `chrome-extension/atlas-capture`：以 unpacked extension 安装后点击 `Send to Atlas`；扩展不持有 Atlas 凭据，只向 `127.0.0.1:43119` 的 Lumio bridge 发送标题、canonical URL 与 Markdown。正文不会进入 Run input 或 output，而是先写入内容寻址的 extraction Artifact，再由当前 node 的 `web-summary-v1` executor 生成 summary Resource。
 - Pi 会在 Atlas 注册成功后自动 reconciliation：读取全部 summary Resource，校验 Artifact hash，投影 `pending`/`reviewed` 卡片，并移除 `dismissed` 卡片。内容无变化时不会改写文件。
