@@ -6,9 +6,19 @@
     <title>Send to Atlas</title>
     <link rel="stylesheet" href="popup.css">
   </head>
-  <body>
-    <button id="send" type="button">Send to Atlas</button>
-    <p id="status" role="status" aria-live="polite"></p>
+  <body aria-busy="true">
+    <header>
+      <span class="indicator" aria-hidden="true"></span>
+      <strong>Send to Atlas</strong>
+    </header>
+    <p id="status" role="status" aria-live="polite">Preparing capture…</p>
+    <dl id="result" hidden>
+      <div><dt>Source</dt><dd id="source-id"></dd></div>
+      <div><dt>Run</dt><dd id="run-id"></dd></div>
+      <div><dt>State</dt><dd id="run-state"></dd></div>
+    </dl>
+    <pre id="run-result" hidden></pre>
+    <button id="retry" type="button" hidden>Retry</button>
     <script src="popup.js"></script>
   </body>
 </html>

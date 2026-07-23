@@ -65,12 +65,54 @@ function extractCurrentPage() {
   };
 }
 
-const button = document.querySelector("#send");
 const status = document.querySelector("#status");
+const resultPanel = document.querySelector("#result");
+const sourceId = document.querySelector("#source-id");
+const runId = document.querySelector("#run-id");
+const runState = document.querySelector("#run-state");
+const runResult = document.querySelector("#run-result");
+const retry = document.querySelector("#retry");
 
-button.addEventListener("click", async () => {
-  button.disabled = true;
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function waitForRun(id) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const response = await fetch(
+      `http://127.0.0.1:43119/runs/${encodeURIComponent(id)}`,
+      { headers: { "X-Lumio-Capture": "1" } },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Bridge returned ${response.status}`);
+    }
+    runState.textContent = payload.status || "unknown";
+    if (payload.status === "completed") {
+      status.dataset.kind = "success";
+      status.textContent = "Summary completed.";
+      if (payload.result && Object.keys(payload.result).length > 0) {
+        runResult.textContent = JSON.stringify(payload.result, null, 2);
+        runResult.hidden = false;
+      }
+      return;
+    }
+    if (payload.status === "failed" || payload.status === "cancelled") {
+      throw new Error(payload.error || `Run ${payload.status}`);
+    }
+    status.textContent = payload.status === "claimed"
+      ? "AtlasRunner is generating the summary…"
+      : "Queued for summary…";
+    await wait(1000);
+  }
+  status.textContent = "Still running. Reopen the extension to send another capture.";
+}
+
+async function sendCurrentPage() {
+  document.body.setAttribute("aria-busy", "true");
   status.dataset.kind = "";
+  resultPanel.hidden = true;
+  runResult.hidden = true;
+  runResult.textContent = "";
+  retry.hidden = true;
   status.textContent = "Extracting page…";
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -88,11 +130,22 @@ button.addEventListener("click", async () => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) throw new Error(payload.error || `Bridge returned ${response.status}`);
+    sourceId.textContent = payload.source_id;
+    runId.textContent = payload.run_id;
+    runState.textContent = "pending";
+    resultPanel.hidden = false;
     status.textContent = "Queued for summary.";
+    await waitForRun(payload.run_id);
   } catch (error) {
     status.dataset.kind = "error";
-    status.textContent = error instanceof Error ? error.message : String(error);
+    status.textContent = error instanceof TypeError && error.message === "Failed to fetch"
+      ? "AtlasRunner capture bridge is unavailable on 127.0.0.1:43119."
+      : error instanceof Error ? error.message : String(error);
+    retry.hidden = false;
   } finally {
-    button.disabled = false;
+    document.body.setAttribute("aria-busy", "false");
   }
-});
+}
+
+retry.addEventListener("click", () => void sendCurrentPage());
+void sendCurrentPage();
