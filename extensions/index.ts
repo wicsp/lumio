@@ -5,7 +5,7 @@
  *   1. Core    — mechanism guards, context, input, quiet-tools
  *   2. Model   — per-provider capabilities
  *   3. Tools   — agent-facing tools (gnosis, librarian, oracle, review, todo, etc.)
- *   4. UI      — footer, questionnaire, plan-mode, lumio-check
+ *   4. UI      — questionnaire, plan-mode, lumio-check
  *   5. Notify  — agent_end notifications (bark, desktop/terminal)
  */
 
@@ -39,7 +39,6 @@ import agentWorkflowAuditExtension from "./workflows/agent-workflow-audit";
 import atlasExtension from "./atlas/index";
 
 // ── UI / experience ─────────────────────────────────────────────────
-import registerMinimalFooter from "./ui/minimal-footer";
 import planModeExtension from "./workflows/plan-mode";
 import lumioCheckCommand from "./maintenance/lumio-check";
 
@@ -71,7 +70,6 @@ export default function (pi: ExtensionAPI) {
 	atlasExtension(pi);
 
 	// ── UI / experience ───────────────────────────────────────────────
-	registerMinimalFooter(pi);
 	planModeExtension(pi);
 	lumioCheckCommand(pi);
 
@@ -83,7 +81,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("lumio", {
 		description: "Show Lumio status",
 		handler: async (_args, ctx) => {
-			ctx.ui.notify("Lumio loaded: guards, quiet tools, fast mode, and minimal footer are active.", "info");
+			ctx.ui.notify("Lumio loaded: guards, quiet tools, and fast mode are active.", "info");
 		},
 	});
 
