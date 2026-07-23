@@ -98,6 +98,11 @@ interface AtlasKnowledgeRefRecord {
   resource_ids: string[];
 }
 
+interface AtlasResourceIgnoreResponse {
+  resource: AtlasResourceRecord;
+  evicted_resource_ids: string[];
+}
+
 function resourceProfileId(resource: AtlasResourceRecord): string {
   const declared = resource.metadata.profile_id;
   if (typeof declared === "string" && declared.trim()) return declared.trim();
@@ -335,12 +340,12 @@ export default function atlasExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("atlas:dismiss", {
-    description: "Dismiss one Atlas Resource and remove its rebuildable Vortex card",
+  pi.registerCommand("atlas:ignore", {
+    description: "Move one Atlas Resource (and its comment) into the 10-item ignore list",
     handler: async (args, ctx) => {
       const resourceId = args.trim();
       if (!resourceId) {
-        ctx.ui.notify("Usage: /atlas:dismiss <resource_id>", "warning");
+        ctx.ui.notify("Usage: /atlas:ignore <resource_id>", "warning");
         return;
       }
       if (!client) {
@@ -348,49 +353,50 @@ export default function atlasExtension(pi: ExtensionAPI) {
         return;
       }
       try {
-        const dismissed = await client.controlPatch<AtlasResourceRecord>(
-          `/api/resources/${encodeURIComponent(resourceId)}/review`,
-          { review_status: "dismissed" },
+        const ignored = await client.controlPost<AtlasResourceIgnoreResponse>(
+          "/api/review-actions/ignore-resource",
+          { resource_id: resourceId },
         );
-        if (!dismissed.ok) {
-          ctx.ui.notify(`Atlas dismiss refused: ${dismissed.error}`, "warning");
+        if (!ignored.ok) {
+          ctx.ui.notify(`Atlas ignore refused: ${ignored.error}`, "warning");
           return;
         }
 
         const vaultPath = configuredVaultPath();
-        if (dismissed.data.kind === "summary" && vaultPath) {
+        if (ignored.data.resource.kind === "summary" && vaultPath) {
           let removal: ResourceCardRemoval;
           try {
             removal = await removeResourceCard(vaultPath, resourceId);
           } catch (err) {
             ctx.ui.notify(
-              `Atlas dismissed ${resourceId}, but local card removal failed: ${err instanceof Error ? err.message : String(err)}. Reconciliation will retry it.`,
+              `Atlas ignored ${resourceId}, but local card removal failed: ${err instanceof Error ? err.message : String(err)}. Reconciliation will retry it.`,
               "warning",
             );
             return;
           }
+          const evicted = ignored.data.evicted_resource_ids.length;
           ctx.ui.notify(
-            `Atlas: dismissed ${resourceId}; Resource Card ${removal.removed ? "removed" : "was already absent"}.`,
+            `Atlas: ignored ${resourceId}; Resource Card ${removal.removed ? "removed" : "was already absent"}${evicted ? `; ${evicted} oldest ignored item permanently cleaned` : ""}.`,
             "info",
           );
         } else {
-          ctx.ui.notify(`Atlas: dismissed ${resourceId}.`, "info");
+          ctx.ui.notify(`Atlas: ignored ${resourceId}.`, "info");
         }
       } catch (err) {
         ctx.ui.notify(
-          `Atlas dismiss failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Atlas ignore failed: ${err instanceof Error ? err.message : String(err)}`,
           "warning",
         );
       }
     },
   });
 
-  pi.registerCommand("atlas:restore", {
-    description: "Restore one dismissed Atlas Resource to pending review",
+  pi.registerCommand("atlas:undo-ignore", {
+    description: "Undo ignore and restore the Resource's previous review state",
     handler: async (args, ctx) => {
       const resourceId = args.trim();
       if (!resourceId) {
-        ctx.ui.notify("Usage: /atlas:restore <resource_id>", "warning");
+        ctx.ui.notify("Usage: /atlas:undo-ignore <resource_id>", "warning");
         return;
       }
       if (!client) {
@@ -398,35 +404,38 @@ export default function atlasExtension(pi: ExtensionAPI) {
         return;
       }
       try {
-        const restored = await client.controlPatch<AtlasResourceRecord>(
-          `/api/resources/${encodeURIComponent(resourceId)}/review`,
-          { review_status: "pending" },
+        const restored = await client.controlPost<AtlasResourceIgnoreResponse>(
+          "/api/review-actions/restore-resource",
+          { resource_id: resourceId },
         );
         if (!restored.ok) {
-          ctx.ui.notify(`Atlas restore failed: ${restored.error}`, "warning");
+          ctx.ui.notify(`Atlas undo-ignore failed: ${restored.error}`, "warning");
           return;
         }
 
         let projection: ResourceCardProjection | null = null;
-        if (restored.data.kind === "summary" && configuredVaultPath()) {
+        if (restored.data.resource.kind === "summary" && configuredVaultPath()) {
           try {
             const bundle = await fetchResourceBundle(client, resourceId);
-            projection = await projectResourceBundle({ ...bundle, resource: restored.data });
+            projection = await projectResourceBundle({
+              ...bundle,
+              resource: restored.data.resource,
+            });
           } catch (err) {
             ctx.ui.notify(
-              `Atlas restored ${resourceId} to pending, but card projection failed: ${err instanceof Error ? err.message : String(err)}. Reconciliation will retry it.`,
+              `Atlas restored ${resourceId}, but card projection failed: ${err instanceof Error ? err.message : String(err)}. Reconciliation will retry it.`,
               "warning",
             );
             return;
           }
         }
         ctx.ui.notify(
-          `Atlas: restored ${resourceId} to pending${projection ? `; Resource Card ${projection.action}` : ""}.`,
+          `Atlas: undo-ignore restored ${resourceId} to ${restored.data.resource.review_status}${projection ? `; Resource Card ${projection.action}` : ""}.`,
           "info",
         );
       } catch (err) {
         ctx.ui.notify(
-          `Atlas restore failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Atlas undo-ignore failed: ${err instanceof Error ? err.message : String(err)}`,
           "warning",
         );
       }
