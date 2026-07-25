@@ -24,7 +24,7 @@ test("paper preview only captures identity and invokes Atlas workflow", async ()
         ok: true as const,
         data: {
           invocation_id: "wfi_paper_1",
-          step_runs: { acquire: "run_acquire", summarize: "run_summarize" },
+          step_runs: { ingest: "run_ingest", summarize: "run_summarize" },
         },
       };
     },
@@ -38,7 +38,7 @@ test("paper preview only captures identity and invokes Atlas workflow", async ()
     "/api/workflow-invocations",
   ]);
   assert.equal(posts[0].body.source_key, "arxiv:2607.01234");
-  assert.equal(posts[1].body.workflow_name, "paper.preview");
+  assert.equal(posts[1].body.workflow_name, "paper.ingest");
   assert.equal(posts[1].body.workflow_version, "1");
   assert.deepEqual(Object.keys(posts[1].body.input).sort(), [
     "arxiv_id",

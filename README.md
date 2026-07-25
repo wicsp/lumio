@@ -93,7 +93,7 @@ Lumio 不上报这些 grants。Atlas attempt 和 Runner manifest 必须同时允
 删除、Vortex 读写或 Atlas control 写入等权限。
 
 - `/atlas:enqueue <Bilibili URL>`：先在 Atlas 幂等创建 Source，再排队执行摘要 Run。
-- `/atlas:paper-preview <arXiv ID or URL>`：创建 paper Source，并触发 `paper.preview@1`；只读取 arXiv Atom 书目元数据与作者摘要，不下载 PDF、不写入 Zotero，结果明确标记为 abstract-based，且不需要 API key。
+- `/atlas:paper-preview <arXiv ID or URL>`：创建 paper Source，并触发 `paper.ingest@1`；将论文导入 Zotero、提取摘要（或 PDF 起始文字）并生成 AI 预览。
 - `chrome-extension/atlas-capture`：以 unpacked extension 安装后点击工具栏图标即发送；扩展不持有 Atlas 凭据，只向 `127.0.0.1:43119` 的 AtlasRunner bridge 发送标题、canonical URL 与 Markdown。正文先写入内容寻址的 extraction Artifact，再触发 `web.summary@1`，由 AtlasRunner 生成 summary Resource。
 - Pi 会在 Atlas 注册成功后自动 reconciliation：读取全部 summary Resource，校验 Artifact hash，投影 `pending`/`reviewed` 卡片，并移除 `dismissed` 卡片。内容无变化时不会改写文件。
 - `/atlas:reconcile`：手动执行同一套全量 reconciliation，并报告 created、updated、removed、unchanged 和 failed 数量。

@@ -49,7 +49,7 @@ export async function requestPaperPreview(
     invocation_id: string;
     step_runs: Record<string, string>;
   }>("/api/workflow-invocations", {
-    workflow_name: "paper.preview",
+    workflow_name: "paper.ingest",
     workflow_version: "1",
     input: {
       source_id: source.data.source_id,
@@ -57,9 +57,9 @@ export async function requestPaperPreview(
       canonical_uri: canonicalUri,
     },
   });
-  if (!invocation.ok) throw new Error(`Atlas paper preview enqueue failed: ${invocation.error}`);
+  if (!invocation.ok) throw new Error(`Atlas paper ingest enqueue failed: ${invocation.error}`);
   const runId = invocation.data.step_runs.summarize;
-  if (!runId) throw new Error("Atlas paper preview workflow omitted summarize step");
+  if (!runId) throw new Error("Atlas paper ingest workflow omitted summarize step");
   return {
     arxiv_id: arxivId,
     source_id: source.data.source_id,
