@@ -37,16 +37,12 @@ import {
   type AtlasResourceBundle,
 } from "./resource-review";
 import { generateDailyReviewDigest, generateWeeklyAudit } from "./digests";
-import {
-  startWebCaptureServer,
-  type WebCaptureServer,
-} from "./web-capture";
+import { requestPaperPreview } from "./paper-preview";
 
 // ─── Module state ────────────────────────────────────────────────────
 
 let client: AtlasClient | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-let webCaptureServer: WebCaptureServer | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const REGISTRATION_TIMEOUT_MS = 5_000;
@@ -200,12 +196,6 @@ function formatReconciliation(result: ResourceCardReconciliation): string {
   return result.errors.length > 0 ? `${counts}; ${result.errors.join("; ")}` : counts;
 }
 
-async function stopWebCaptureServer() {
-  const active = webCaptureServer;
-  webCaptureServer = null;
-  if (active) await active.close();
-}
-
 function formatStatus(status: AtlasClientStatus): string {
   if (status.kind === "disconnected") {
     return `Atlas: disconnected — ${status.reason}`;
@@ -246,6 +236,32 @@ async function tryRegister(c: AtlasClient): Promise<boolean> {
 // ─── Extension entry point ───────────────────────────────────────────
 
 export default function atlasExtension(pi: ExtensionAPI) {
+  pi.registerCommand("atlas:paper-preview", {
+    description: "Create an abstract-based preview for one arXiv paper",
+    handler: async (args, ctx) => {
+      if (!args.trim()) {
+        ctx.ui.notify("Usage: /atlas:paper-preview <arXiv ID or URL>", "warning");
+        return;
+      }
+      if (!client) {
+        ctx.ui.notify("Atlas is not connected.", "warning");
+        return;
+      }
+      try {
+        const result = await requestPaperPreview(client, args);
+        ctx.ui.notify(
+          `Atlas: started abstract preview for ${result.arxiv_id} (${result.run_id}).`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui.notify(
+          `Atlas paper preview failed: ${err instanceof Error ? err.message : String(err)}`,
+          "warning",
+        );
+      }
+    },
+  });
+
   // ── /atlas enqueue command ───────────────────────────────────
   pi.registerCommand("atlas:enqueue", {
     description: "Enqueue a Bilibili video URL for summary processing",
@@ -531,7 +547,6 @@ export default function atlasExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     // Clean up any previous session's resources.
     stopHeartbeat();
-    await stopWebCaptureServer();
     client = null;
 
     const config = parseConfig();
@@ -541,15 +556,6 @@ export default function atlasExtension(pi: ExtensionAPI) {
     }
 
     client = createClient(config, ctx.sessionManager.getSessionId());
-    try {
-      webCaptureServer = await startWebCaptureServer(() => client);
-    } catch (err) {
-      ctx.ui.notify(
-        `Lumio web capture bridge failed: ${err instanceof Error ? err.message : String(err)}`,
-        "warning",
-      );
-    }
-
     const vaultPath = configuredVaultPath();
     if (vaultPath) {
       try {
@@ -608,7 +614,6 @@ export default function atlasExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async () => {
     stopHeartbeat();
-    await stopWebCaptureServer();
     client = null;
   });
 }

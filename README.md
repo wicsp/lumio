@@ -79,7 +79,7 @@ pi -e <path-to-lumio>
 - Lumio quiet tools：覆盖内置 `bash/read/grep/find/ls/edit/write` 的 TUI renderer，让折叠工具行只显示一行调用和展开提示，不改变模型可见的工具结果。
 - Gnosis、Librarian、Oracle、review、triage、questionnaire 和 workflow audit 等本地工具与命令。
 - Atlas 交互入口：捕获 Bilibili/Web Source、触发版本化 Workflow、查看状态，并将 Atlas Resource 投影到 Vortex。
-- Lumio Web Clipper：Chrome 中只有一个 `Send to Atlas` 按钮；浏览器提取当前已渲染页面，Lumio 经本机 bridge 写入 extraction Artifact 并排队正常网页摘要。
+- Lumio Web Clipper：点击 Chrome 工具栏图标即提取当前已渲染页面并发送；弹窗只展示进度、错误和 Atlas Source/Run 结果。常驻 AtlasRunner 的本机 bridge 写入 extraction Artifact 并排队正常网页摘要，不要求打开 Lumio/Pi 会话。
 - Bark 与桌面/终端完成通知。
 
 ### Atlas / Vortex 工作流
@@ -93,7 +93,8 @@ Lumio 不上报这些 grants。Atlas attempt 和 Runner manifest 必须同时允
 删除、Vortex 读写或 Atlas control 写入等权限。
 
 - `/atlas:enqueue <Bilibili URL>`：先在 Atlas 幂等创建 Source，再排队执行摘要 Run。
-- `chrome-extension/atlas-capture`：以 unpacked extension 安装后点击 `Send to Atlas`；扩展不持有 Atlas 凭据，只向 `127.0.0.1:43119` 的 Lumio bridge 发送标题、canonical URL 与 Markdown。正文先写入内容寻址的 extraction Artifact，再触发 `web.summary@1`，由 AtlasRunner 生成 summary Resource。
+- `/atlas:paper-preview <arXiv ID or URL>`：创建 paper Source，并触发 `paper.preview@1`；只读取 arXiv Atom 书目元数据与作者摘要，不下载 PDF、不写入 Zotero，结果明确标记为 abstract-based，且不需要 API key。
+- `chrome-extension/atlas-capture`：以 unpacked extension 安装后点击工具栏图标即发送；扩展不持有 Atlas 凭据，只向 `127.0.0.1:43119` 的 AtlasRunner bridge 发送标题、canonical URL 与 Markdown。正文先写入内容寻址的 extraction Artifact，再触发 `web.summary@1`，由 AtlasRunner 生成 summary Resource。
 - Pi 会在 Atlas 注册成功后自动 reconciliation：读取全部 summary Resource，校验 Artifact hash，投影 `pending`/`reviewed` 卡片，并移除 `dismissed` 卡片。内容无变化时不会改写文件。
 - `/atlas:reconcile`：手动执行同一套全量 reconciliation，并报告 created、updated、removed、unchanged 和 failed 数量。
 - Resource 阅读与评论现在直接在 Atlas Console 完成；Comment 与审阅状态以 Atlas 为准，不要求安装或打开 Obsidian。
@@ -108,7 +109,7 @@ summary Resource 的 `metadata.profile_id` 表示分析目的。同一 Source �
 
 `Resources/**` 是机器生成的投影，可以重建；`Knowledge/**` 是本人写评论与查看观点的本地平面，reconciliation、dismiss 和 restore 都不会覆盖或删除它。完成后的 Comment 以 Atlas 为事实源；摘要正文、transcript 和网页 extraction 不进入 Atlas SQLite，也不进入 Run output。
 
-网页采集 bridge 默认只监听 loopback 的 `43119` 端口，只接受 Chrome extension origin、JSON 和专用 capture header。可用 `LUMIO_WEB_CAPTURE_PORT` 改端口；修改后也要同步更新扩展的 `BRIDGE_URL` 与 `host_permissions`。
+网页采集 bridge 由 AtlasRunner 常驻提供，默认只监听 loopback 的 `43119` 端口，只接受 Chrome extension origin、JSON 和专用 capture header。可在 Runner 配置中用 `web_capture_port` 改端口；修改后也要同步更新扩展的 `BRIDGE_URL` 与 `host_permissions`。
 
 ## 迁移来源
 
