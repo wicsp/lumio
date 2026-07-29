@@ -1,12 +1,9 @@
 /**
- * Atlas HTTP client — configuration parsing, registration, heartbeat, and redacted diagnostics.
+ * Atlas HTTP client — configuration parsing, health checks, and control API access.
  *
- * M2.5: supports v2 scoped-credential flow.
- *   - Registration returns a scoped_token.
- *   - Work operations (claim, heartbeat, complete, fail) use the scoped token.
- *   - Registration and agent heartbeat still use the shared (bootstrap) token.
- *
- * Uses the platform `fetch()` with no extra runtime dependencies.
+ * Provides a lightweight client for Lumio's user-facing Atlas commands.
+ * Does NOT register as a Runner or maintain a heartbeat; background
+ * execution is handled by AtlasRunner.
  */
 
 import { readFileSync } from "node:fs";
@@ -15,56 +12,8 @@ import { readFileSync } from "node:fs";
 
 export interface AtlasConfig {
   url: string;
-  /** Bootstrap token loaded from ATLAS_AGENT_TOKEN_FILE (shared, for registration). */
   token: string;
   nodeId: string;
-}
-
-export interface AtlasRunnerRegistration {
-  runner_id: string;
-  name: string;
-  node: {
-    node_id: string;
-    os?: string;
-    arch?: string;
-    labels: string[];
-  };
-  executors: Array<{
-    name: string;
-    kind: "agent" | "script" | "process";
-    version?: string;
-  }>;
-  available_grants: string[];
-  legacy_capabilities: string[];
-  metadata: Record<string, unknown>;
-}
-
-export interface AtlasRunnerRegistrationResponse {
-  runner_id: string;
-  scoped_token: string;
-  protocol_version: string;
-}
-
-export interface AtlasRunnerRecord {
-  runner_id: string;
-  name: string | null;
-  node: AtlasRunnerRegistration["node"];
-  executors: AtlasRunnerRegistration["executors"];
-  available_grants: string[];
-  metadata: Record<string, unknown>;
-  registered_at: string;
-  last_seen_at: string;
-  online: boolean;
-}
-
-export interface AtlasAgentRecord {
-  agent_id: string;
-  name: string | null;
-  capabilities: string[];
-  metadata: Record<string, unknown>;
-  registered_at: string;
-  last_seen_at: string;
-  online: boolean;
 }
 
 export interface AtlasHealth {
@@ -74,7 +23,7 @@ export interface AtlasHealth {
 
 export type AtlasClientStatus =
   | { kind: "disconnected"; reason: string }
-  | { kind: "connected"; health: AtlasHealth; agent: AtlasAgentRecord | null };
+  | { kind: "connected"; health: AtlasHealth };
 
 // ─── Configuration ───────────────────────────────────────────────────
 
@@ -82,10 +31,8 @@ export type AtlasClientStatus =
  * Parse configuration from environment variables.
  *
  * Token resolution priority:
- *   1. ATLAS_AGENT_TOKEN_FILE — read token from a file (recommended for production;
- *      keeps the secret out of process arguments and environment dumps).
- *   2. ATLAS_AGENT_SHARED_TOKEN — fallback env var (convenient for same-machine
- *      development when the Atlas server env already carries the token).
+ *   1. ATLAS_AGENT_TOKEN_FILE — read token from a file (recommended for production).
+ *   2. ATLAS_AGENT_SHARED_TOKEN — fallback env var.
  *
  * Returns undefined when required variables are missing (integration is disabled).
  */
@@ -98,13 +45,13 @@ export function parseConfig(): AtlasConfig | undefined {
 
   let token: string | undefined;
 
-  // 1. Prefer token file (production path per RFC 0001).
+  // 1. Prefer token file.
   const tokenFile = process.env.ATLAS_AGENT_TOKEN_FILE?.trim();
   if (tokenFile) {
     try {
       token = readFileSync(tokenFile, "utf-8").trim();
     } catch {
-      // File exists but unreadable — don't fall back, surface the error.
+      // File exists but unreadable — don't fall back.
     }
   }
 
@@ -118,110 +65,11 @@ export function parseConfig(): AtlasConfig | undefined {
   return { url, token, nodeId };
 }
 
-// ─── Identity ────────────────────────────────────────────────────────
-
-/**
- * Generate one combined Lumio executor identity from Pi's real session ID.
- * Pi is runtime metadata, not a second agent hierarchy level.
- */
-export function generateAgentId(config: AtlasConfig, piSessionId: string): string {
-  const instanceId = piSessionId.replace(/[^A-Za-z0-9]/g, "").slice(0, 16) || "ephemeral";
-  return `${config.nodeId}.lumio.${instanceId}`;
-}
-
-export function generateAgentName(config: AtlasConfig): string {
-  return process.env.LUMIO_AGENT_MODE === "background"
-    ? `Lumio background pi on ${config.nodeId}`
-    : `Lumio pi session on ${config.nodeId}`;
-}
-
-// ─── Metadata ────────────────────────────────────────────────────────
-
-/** Build a runtime-neutral runner registration; job names are legacy-only routing data. */
-export function buildRunnerRegistration(
-  config: AtlasConfig,
-  runnerId: string,
-  name: string,
-  legacyCapabilities: string[],
-  instanceId?: string,
-): AtlasRunnerRegistration {
-  const background = process.env.LUMIO_AGENT_MODE === "background";
-  return {
-    runner_id: runnerId,
-    name,
-    node: {
-      node_id: config.nodeId,
-      os: process.platform,
-      arch: process.arch,
-      labels: parseList(process.env.ATLAS_NODE_LABELS),
-    },
-    executors: [
-      { name: "lumio-interactive", kind: "agent", version: _lumioVersion() },
-    ],
-    available_grants: [],
-    legacy_capabilities: legacyCapabilities,
-    metadata: {
-      distribution: "lumio",
-      distribution_version: _lumioVersion(),
-      distribution_revision: _lumioRevision(),
-      runner_mode: background ? "background" : "interactive",
-      instance_id: instanceId ?? null,
-    },
-  };
-}
-
-function parseList(value: string | undefined): string[] {
-  if (!value) return [];
-  return Array.from(new Set(value.split(",").map((item) => item.trim()).filter(Boolean)));
-}
-
-function _lumioVersion(): string {
-  try {
-    const path = require("node:path");
-    const fs = require("node:fs");
-    let dir = __dirname;
-    for (let i = 0; i < 5; i++) {
-      const pkgPath = path.join(dir, "package.json");
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { name?: string; version?: string };
-        if (pkg.name === "lumio") return pkg.version ?? "unknown";
-      }
-      dir = path.dirname(dir);
-    }
-    return "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
-function _lumioRevision(): string | null {
-  try {
-    const { execSync } = require("node:child_process");
-    const path = require("node:path");
-    const fs = require("node:fs");
-
-    let dir = __dirname;
-    for (let i = 0; i < 5; i++) {
-      if (fs.existsSync(path.join(dir, ".git"))) break;
-      dir = path.dirname(dir);
-    }
-
-    return execSync("git rev-parse --short HEAD", { cwd: dir, encoding: "utf-8", timeout: 2000 }).trim();
-  } catch {
-    return null;
-  }
-}
-
 // ─── HTTP helpers ────────────────────────────────────────────────────
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1_000;
-
-function redactToken(token: string): string {
-  if (token.length <= 8) return "***";
-  return `${token.slice(0, 4)}...${token.slice(-4)}`;
-}
 
 async function fetchWithTimeout(
   url: string,
@@ -249,12 +97,9 @@ async function atlasRequest<T>(
   body?: unknown,
   timeoutMs?: number,
   retries?: number,
-  /** If provided, use this token instead of config.token. */
-  token?: string,
 ): Promise<{ ok: true; data: T } | { ok: false; status: number; error: string }> {
   const url = `${config.url.replace(/\/+$/, "")}${path}`;
   const maxRetries = retries ?? MAX_RETRIES;
-  const authToken = token ?? config.token;
 
   let lastError = "";
   let lastStatus = 0;
@@ -264,7 +109,7 @@ async function atlasRequest<T>(
       const response = await fetchWithTimeout(url, {
         method,
         headers: {
-          Authorization: `Bearer ${authToken}`,
+          Authorization: `Bearer ${config.token}`,
           "Content-Type": "application/json",
         },
         body: body ? JSON.stringify(body) : undefined,
@@ -276,8 +121,7 @@ async function atlasRequest<T>(
         return { ok: true, data };
       }
 
-      // Deterministic client errors will not improve on retry. Preserve the
-      // bounded Atlas response so schema failures remain actionable.
+      // Deterministic client errors will not improve on retry.
       if (response.status >= 400 && response.status < 500
         && response.status !== 408 && response.status !== 429) {
         const text = await response.text().catch(() => "");
@@ -313,26 +157,9 @@ async function atlasRequest<T>(
 
 export interface AtlasClient {
   config: AtlasConfig;
-  agentId: string;
-
-  /** The scoped token obtained from registration (v2 work credential). */
-  readonly scopedToken: string | null;
 
   /** Check Atlas health (no auth required). */
   health(): Promise<{ ok: true; data: AtlasHealth } | { ok: false; error: string }>;
-
-  /**
-   * Register this session as an agent.
-   * Returns the registration response including a scoped token for work operations.
-   */
-  register(payload: AtlasRunnerRegistration): Promise<
-    { ok: true; data: AtlasAgentRecord } | { ok: false; error: string }
-  >;
-
-  /** Send a heartbeat using the bootstrap shared token. */
-  heartbeat(): Promise<
-    { ok: true; data: AtlasAgentRecord } | { ok: false; error: string }
-  >;
 
   /** Build a human-readable status for the /atlas command. */
   status(): Promise<AtlasClientStatus>;
@@ -351,16 +178,12 @@ export interface AtlasClient {
 
 class AtlasHttpClient implements AtlasClient {
   config: AtlasConfig;
-  agentId: string;
-  scopedToken: string | null = null;
 
   private _disconnectedReason: string | null = null;
   private _lastHealth: AtlasHealth | null = null;
-  private _lastAgent: AtlasAgentRecord | null = null;
 
-  constructor(config: AtlasConfig, agentId: string) {
+  constructor(config: AtlasConfig) {
     this.config = config;
-    this.agentId = agentId;
   }
 
   async health(): Promise<{ ok: true; data: AtlasHealth } | { ok: false; error: string }> {
@@ -380,70 +203,6 @@ class AtlasHttpClient implements AtlasClient {
     }
   }
 
-  async register(payload: AtlasRunnerRegistration) {
-    const result = await atlasRequest<AtlasRunnerRegistrationResponse>(
-      this.config,
-      "/api/runners/register",
-      "POST",
-      payload,
-    );
-    if (result.ok) {
-      const regResp = result.data;
-      if (regResp.protocol_version !== "atlas-runner-v1") {
-        const error = `Atlas protocol mismatch: expected atlas-runner-v1, received ${regResp.protocol_version || "unknown"}`;
-        this._disconnectedReason = error;
-        return { ok: false, error };
-      }
-      this.agentId = regResp.runner_id;
-      // Store the scoped token for subsequent work operations.
-      if (regResp.scoped_token) {
-        this.scopedToken = regResp.scoped_token;
-      }
-      this._lastAgent = {
-        agent_id: regResp.runner_id,
-        name: payload.name,
-        capabilities: payload.legacy_capabilities,
-        metadata: payload.metadata,
-        registered_at: new Date().toISOString(),
-        last_seen_at: new Date().toISOString(),
-        online: true,
-      };
-      this._disconnectedReason = null;
-      return { ok: true, data: this._lastAgent };
-    } else {
-      this._disconnectedReason = result.error;
-      return { ok: false, error: result.error };
-    }
-  }
-
-  async heartbeat() {
-    const result = await atlasRequest<AtlasRunnerRecord>(
-      this.config,
-      `/api/runners/${encodeURIComponent(this.agentId)}/heartbeat`,
-      "POST",
-      undefined,
-      DEFAULT_TIMEOUT_MS,
-      2, // fewer retries for heartbeat
-    );
-    if (result.ok) {
-      this._lastAgent = {
-        agent_id: result.data.runner_id,
-        name: result.data.name,
-        capabilities: this._lastAgent?.capabilities ?? [],
-        metadata: result.data.metadata,
-        registered_at: result.data.registered_at,
-        last_seen_at: result.data.last_seen_at,
-        online: result.data.online,
-      };
-      this._disconnectedReason = null;
-    } else {
-      this._disconnectedReason = result.error;
-    }
-    return result.ok
-      ? { ok: true as const, data: this._lastAgent! }
-      : result;
-  }
-
   async status(): Promise<AtlasClientStatus> {
     const h = await this.health();
     if (!h.ok) {
@@ -452,7 +211,6 @@ class AtlasHttpClient implements AtlasClient {
     return {
       kind: "connected",
       health: h.data,
-      agent: this._lastAgent,
     };
   }
 
@@ -467,22 +225,8 @@ class AtlasHttpClient implements AtlasClient {
   async controlPatch<T>(path: string, body: unknown) {
     return atlasRequest<T>(this.config, path, "PATCH", body, DEFAULT_TIMEOUT_MS, 2);
   }
-
-  /** Build a concise diagnostic string (token redacted). */
-  diagnostic(): string {
-    const url = this.config.url;
-    const token = redactToken(this.config.token);
-    const node = this.config.nodeId;
-    const agent = this.agentId;
-    const scoped = this.scopedToken ? `scoped=${redactToken(this.scopedToken)}` : "no scoped token";
-    const disconnected = this._disconnectedReason
-      ? `\n  last error: ${this._disconnectedReason}`
-      : "";
-    return `Atlas: ${url} (bootstrap_token=${token}, ${scoped}, node=${node}, agent=${agent})${disconnected}`;
-  }
 }
 
-export function createClient(config: AtlasConfig, piSessionId: string): AtlasClient {
-  const agentId = generateAgentId(config, piSessionId);
-  return new AtlasHttpClient(config, agentId);
+export function createClient(config: AtlasConfig): AtlasClient {
+  return new AtlasHttpClient(config);
 }

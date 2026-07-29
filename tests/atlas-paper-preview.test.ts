@@ -23,8 +23,12 @@ test("paper preview only captures identity and invokes Atlas workflow", async ()
       return {
         ok: true as const,
         data: {
-          invocation_id: "wfi_paper_1",
-          step_runs: { ingest: "run_ingest", summarize: "run_summarize" },
+          reused: false,
+          invocation: {
+            invocation_id: "wfi_paper_1",
+            step_runs: { ingest: "run_ingest", summarize: "run_summarize" },
+          },
+          preview_resource: null,
         },
       };
     },
@@ -35,14 +39,8 @@ test("paper preview only captures identity and invokes Atlas workflow", async ()
   assert.equal(result.run_id, "run_summarize");
   assert.deepEqual(posts.map((item) => item.path), [
     "/api/sources",
-    "/api/workflow-invocations",
+    "/api/paper/ingest",
   ]);
   assert.equal(posts[0].body.source_key, "arxiv:2607.01234");
-  assert.equal(posts[1].body.workflow_name, "paper.ingest");
-  assert.equal(posts[1].body.workflow_version, "1");
-  assert.deepEqual(Object.keys(posts[1].body.input).sort(), [
-    "arxiv_id",
-    "canonical_uri",
-    "source_id",
-  ]);
+  assert.deepEqual(posts[1].body, { source_id: "src_paper_12345678" });
 });

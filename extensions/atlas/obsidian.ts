@@ -40,6 +40,7 @@ export interface AtlasResourceRecord {
 
 export interface ProjectableResource extends AtlasResourceRecord {
   artifact_uri: string;
+  artifact_content?: string;
   source_uri: string;
 }
 
@@ -82,7 +83,7 @@ export async function ensureVaultStructure(vaultPath: string): Promise<void> {
 - \`Resources/**\` contains machine-generated or mechanically derived material and can be rebuilt.
 - AI may create an empty Knowledge Comment template only after an explicit user command.
 - AI must never generate, complete, rewrite, or silently promote prose in \`Knowledge/**\`.
-- Atlas stores completed human Comments plus Source, Resource, Run, and KnowledgeRef metadata; machine artifact bytes stay outside SQLite.
+- Atlas stores completed human Comments plus Source, Resource, Run, KnowledgeRef, and bounded machine Resource content.
 - Zotero remains authoritative for bibliography and PDFs.
 `);
 
@@ -123,15 +124,22 @@ export async function projectResourceCard(
   vaultPath: string,
   resource: ProjectableResource,
 ): Promise<ResourceCardProjection> {
-  if (!resource.artifact_uri.startsWith("file://")) {
+  let body: string;
+  if (resource.artifact_uri.startsWith("atlas://artifacts/")) {
+    if (typeof resource.artifact_content !== "string") {
+      throw new Error(`Atlas artifact content is missing: ${resource.resource_id}`);
+    }
+    body = resource.artifact_content;
+  } else if (resource.artifact_uri.startsWith("file://")) {
+    const artifactPath = fileURLToPath(resource.artifact_uri);
+    const artifactRoot = process.env.ATLAS_ARTIFACT_ROOT?.trim();
+    if (artifactRoot && !isWithin(resolve(artifactRoot), resolve(artifactPath))) {
+      throw new Error(`Artifact is outside ATLAS_ARTIFACT_ROOT: ${resource.resource_id}`);
+    }
+    body = await readFile(artifactPath, "utf-8");
+  } else {
     throw new Error(`Unsupported artifact URI: ${resource.artifact_uri.slice(0, 80)}`);
   }
-  const artifactPath = fileURLToPath(resource.artifact_uri);
-  const artifactRoot = process.env.ATLAS_ARTIFACT_ROOT?.trim();
-  if (artifactRoot && !isWithin(resolve(artifactRoot), resolve(artifactPath))) {
-    throw new Error(`Artifact is outside ATLAS_ARTIFACT_ROOT: ${resource.resource_id}`);
-  }
-  const body = await readFile(artifactPath, "utf-8");
   const actualHash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
   if (actualHash !== resource.content_hash) {
     throw new Error(`Artifact checksum mismatch for ${resource.resource_id}`);

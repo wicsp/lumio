@@ -1,26 +1,17 @@
 /**
  * Atlas Connected Lumio Agent — RFC 0001 + M2.5 Execution Hardening.
  *
- * Registers an active pi/Lumio session as an observable Atlas agent with
- * heartbeat and capability advertisement. Atlas connectivity is optional;
- * startup, local tools, and shutdown are never blocked by Atlas unavailability.
- *
- * M2.5 changes:
- *   - Unknown jobs are explicitly failed (no silent success).
- *   - /atlas:enqueue sets capabilities_required.
- *   - Handler signature uses typed HandlerResult instead of raw strings.
+ * Registers user-facing Atlas commands for manual use within Pi/Lumio sessions.
+ * Does NOT register as an Atlas Runner or run background workflows; all
+ * background execution is handled by AtlasRunner.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   parseConfig,
   createClient,
-  generateAgentId,
-  generateAgentName,
-  buildRunnerRegistration,
   type AtlasClient,
   type AtlasClientStatus,
-  type AtlasRunnerRegistration,
 } from "./client";
 import {
   configuredVaultPath,
@@ -42,44 +33,8 @@ import { requestPaperPreview } from "./paper-preview";
 // ─── Module state ────────────────────────────────────────────────────
 
 let client: AtlasClient | null = null;
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
-const REGISTRATION_TIMEOUT_MS = 5_000;
-
-function advertisedCapabilities(): string[] {
-  return [];
-}
-
-// ─── Heartbeat loop ──────────────────────────────────────────────────
-
-function startHeartbeat(c: AtlasClient, ctx: { ui?: { notify?: (msg: string, kind: string) => void } }) {
-  stopHeartbeat();
-
-  heartbeatTimer = setInterval(async () => {
-    try {
-      const result = await c.heartbeat();
-      if (!result.ok) {
-        // Only log after first failure to avoid noise on transient issues.
-        // We track the disconnected reason silently in the client.
-      }
-    } catch {
-      // Silently ignore — connectivity is optional.
-    }
-  }, HEARTBEAT_INTERVAL_MS);
-
-  // Allow Node to exit even if the timer is active.
-  if (heartbeatTimer && typeof heartbeatTimer === "object" && "unref" in heartbeatTimer) {
-    (heartbeatTimer as NodeJS.Timeout).unref();
-  }
-}
-
-function stopHeartbeat() {
-  if (heartbeatTimer !== null) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-}
+// ─── Reconciliation ──────────────────────────────────────────────────
 
 export interface ResourceCardReconciliation {
   created: number;
@@ -167,7 +122,7 @@ export async function reconcileResourceCards(
           continue;
         }
         const bundleResponse = await c.controlGet<AtlasResourceBundle>(
-          `/api/resources/${encodeURIComponent(resource.resource_id)}/bundle`,
+          `/api/resources/${encodeURIComponent(resource.resource_id)}/content`,
         );
         if (!bundleResponse.ok) throw new Error(bundleResponse.error);
         const projection = await projectResourceBundle(bundleResponse.data);
@@ -200,37 +155,7 @@ function formatStatus(status: AtlasClientStatus): string {
   if (status.kind === "disconnected") {
     return `Atlas: disconnected — ${status.reason}`;
   }
-
-  const lines: string[] = [
-    `Atlas: connected — ${status.health.version}, health ${status.health.status}`,
-  ];
-  if (status.agent) {
-    const a = status.agent;
-    lines.push(
-      `  runner: ${a.agent_id} · ${a.online ? "online" : "offline"} · last seen ${a.last_seen_at}`,
-    );
-    if (a.capabilities.length > 0) {
-      lines.push(`  legacy handlers: ${a.capabilities.join(", ")}`);
-    }
-  } else {
-    lines.push("  runner: not registered");
-  }
-  return lines.join("\n");
-}
-
-// ─── Registration ────────────────────────────────────────────────────
-
-async function tryRegister(c: AtlasClient): Promise<boolean> {
-  const payload: AtlasRunnerRegistration = buildRunnerRegistration(
-    c.config,
-    c.agentId,
-    generateAgentName(c.config),
-    advertisedCapabilities(),
-    c.agentId.split(".").at(-1),
-  );
-
-  const result = await c.register(payload);
-  return result.ok;
+  return `Atlas: connected — ${status.health.version}, health ${status.health.status}`;
 }
 
 // ─── Extension entry point ───────────────────────────────────────────
@@ -250,7 +175,9 @@ export default function atlasExtension(pi: ExtensionAPI) {
       try {
         const result = await requestPaperPreview(client, args);
         ctx.ui.notify(
-          `Atlas: started abstract preview for ${result.arxiv_id} (${result.run_id}).`,
+          result.preview_resource_id
+            ? `Atlas: reused paper preview for ${result.arxiv_id} (${result.preview_resource_id}).`
+            : `Atlas: started paper preview for ${result.arxiv_id} (${result.run_id}).`,
           "info",
         );
       } catch (err) {
@@ -519,7 +446,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
 
   // ── /atlas command ─────────────────────────────────────────────
   pi.registerCommand("atlas", {
-    description: "Show Atlas connection and agent status",
+    description: "Show Atlas connection status",
     handler: async (_args, ctx) => {
       if (!client) {
         const config = parseConfig();
@@ -531,7 +458,7 @@ export default function atlasExtension(pi: ExtensionAPI) {
           return;
         }
         ctx.ui.notify(
-          "Atlas configured but no active session agent. Start a new session to register.",
+          "Atlas configured but no active session agent. Use /atlas:enqueue, /atlas:reconcile etc. to interact.",
           "info",
         );
         return;
@@ -546,74 +473,42 @@ export default function atlasExtension(pi: ExtensionAPI) {
   // ── Session lifecycle ─────────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
     // Clean up any previous session's resources.
-    stopHeartbeat();
     client = null;
 
     const config = parseConfig();
-    if (!config) {
-      // Integration disabled — no diagnostic noise on every session.
-      return;
-    }
+    if (!config) return;
 
-    client = createClient(config, ctx.sessionManager.getSessionId());
+    client = createClient(config);
     const vaultPath = configuredVaultPath();
     if (vaultPath) {
       try {
         await ensureVaultStructure(vaultPath);
-      } catch (err) {
-        ctx.ui.notify(
-          `Vortex bootstrap failed: ${err instanceof Error ? err.message : String(err)}`,
-          "warning",
-        );
-      }
-    }
-
-    // Register with a short timeout; failure is non-blocking.
-    try {
-      const ok = await tryRegister(client);
-      if (ok) {
-        startHeartbeat(client, ctx);
-        let reconciliationText = "";
-        let reconciliationFailed = false;
-        if (vaultPath) {
-          try {
-            const result = await reconcileResourceCards(client);
-            reconciliationText = `; Vortex ${formatReconciliation(result)}`;
-            reconciliationFailed = result.failed > 0;
-            await generateDailyReviewDigest(client, vaultPath);
-            if (new Date().getDay() === 0) await generateWeeklyAudit(client, vaultPath);
-          } catch (err) {
-            reconciliationFailed = true;
-            reconciliationText = `; Vortex reconciliation failed: ${err instanceof Error ? err.message : String(err)}`;
+        const health = await client.health();
+        if (health.ok) {
+          const result = await reconcileResourceCards(client);
+          await generateDailyReviewDigest(client, vaultPath);
+          if (new Date().getDay() === 0) {
+            await generateWeeklyAudit(client, vaultPath);
+          }
+          if (result.failed > 0 && ctx.hasUI) {
+            ctx.ui.notify(
+              `Atlas Vortex reconciliation: ${formatReconciliation(result)}`,
+              "warning",
+            );
           }
         }
-
-        // Single startup diagnostic includes the projection result, so reconciliation is visible.
-        const status = await client.status();
-        if (status.kind === "connected" && status.agent) {
+      } catch (error) {
+        if (ctx.hasUI) {
           ctx.ui.notify(
-            `Atlas: registered as ${status.agent.agent_id}${reconciliationText}`,
-            reconciliationFailed ? "warning" : "info",
+            `Atlas Vortex startup sync failed: ${error instanceof Error ? error.message : String(error)}`,
+            "warning",
           );
         }
-      } else if (ctx.hasUI) {
-        // Only show disconnect on startup when we have a UI.
-        ctx.ui.notify(
-          `Atlas: registration failed (will retry on heartbeat)`,
-          "warning",
-        );
-        // Start heartbeat anyway — registration may be recovered by
-        // a subsequent heartbeat call (Atlas upserts on register).
-        startHeartbeat(client, ctx);
       }
-    } catch {
-      // Connectivity is optional — start heartbeat anyway.
-      startHeartbeat(client, ctx);
     }
   });
 
   pi.on("session_shutdown", async () => {
-    stopHeartbeat();
     client = null;
   });
 }

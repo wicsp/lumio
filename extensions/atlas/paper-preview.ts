@@ -8,6 +8,8 @@ export interface PaperPreviewResult {
   source_id: string;
   invocation_id: string;
   run_id: string;
+  preview_resource_id: string;
+  reused: boolean;
 }
 
 export function parseArxivId(value: string): string {
@@ -45,25 +47,28 @@ export async function requestPaperPreview(
   });
   if (!source.ok) throw new Error(`Atlas Source capture failed: ${source.error}`);
 
-  const invocation = await client.controlPost<{
-    invocation_id: string;
-    step_runs: Record<string, string>;
-  }>("/api/workflow-invocations", {
-    workflow_name: "paper.ingest",
-    workflow_version: "1",
-    input: {
-      source_id: source.data.source_id,
-      arxiv_id: arxivId,
-      canonical_uri: canonicalUri,
-    },
+  const ingest = await client.controlPost<{
+    reused: boolean;
+    invocation?: {
+      invocation_id: string;
+      step_runs: Record<string, string>;
+    } | null;
+    preview_resource?: { resource_id: string } | null;
+  }>("/api/paper/ingest", {
+    source_id: source.data.source_id,
   });
-  if (!invocation.ok) throw new Error(`Atlas paper ingest enqueue failed: ${invocation.error}`);
-  const runId = invocation.data.step_runs.summarize;
-  if (!runId) throw new Error("Atlas paper ingest workflow omitted summarize step");
+  if (!ingest.ok) throw new Error(`Atlas paper ingest enqueue failed: ${ingest.error}`);
+  const runId = ingest.data.invocation?.step_runs.summarize ?? "";
+  const previewResourceId = ingest.data.preview_resource?.resource_id ?? "";
+  if (!runId && !previewResourceId) {
+    throw new Error("Atlas paper ingest response omitted its workflow or preview");
+  }
   return {
     arxiv_id: arxivId,
     source_id: source.data.source_id,
-    invocation_id: invocation.data.invocation_id,
+    invocation_id: ingest.data.invocation?.invocation_id ?? "",
     run_id: runId,
+    preview_resource_id: previewResourceId,
+    reused: ingest.data.reused,
   };
 }

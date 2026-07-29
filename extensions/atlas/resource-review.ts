@@ -15,6 +15,7 @@ export interface AtlasResourceBundle {
   resource: AtlasResourceRecord;
   source: AtlasSourceRecord;
   artifact: ArtifactRef;
+  content: string;
 }
 
 export interface ResourceCommentResult {
@@ -93,7 +94,7 @@ export async function fetchResourceBundle(
   resourceId: string,
 ): Promise<AtlasResourceBundle> {
   const response = await client.controlGet<AtlasResourceBundle>(
-    `/api/resources/${encodeURIComponent(resourceId)}/bundle`,
+    `/api/resources/${encodeURIComponent(resourceId)}/content`,
   );
   if (!response.ok) {
     throw atlasError("Resource bundle lookup", response, "resource_not_found");
@@ -109,6 +110,7 @@ export async function projectResourceBundle(
   return projectResourceCard(vaultPath, {
     ...bundle.resource,
     artifact_uri: bundle.artifact.uri,
+    artifact_content: bundle.content,
     source_uri: bundle.source.canonical_uri,
   });
 }

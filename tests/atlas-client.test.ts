@@ -3,9 +3,7 @@ import test from "node:test";
 
 import {
   createClient,
-  buildRunnerRegistration,
-  generateAgentId,
-  generateAgentName,
+  parseConfig,
   type AtlasConfig,
 } from "../extensions/atlas/client";
 
@@ -15,73 +13,60 @@ const config: AtlasConfig = {
   nodeId: "macsp",
 };
 
-test("agent identity is one Lumio executor using Pi's real session instance", () => {
-  assert.equal(
-    generateAgentId(config, "12345678-abcd-ef00-1122-334455667788"),
-    "macsp.lumio.12345678abcdef00",
-  );
+test("createClient returns a usable client without registration", () => {
+  const client = createClient(config);
+  assert.equal(client.config.url, "http://atlas.test");
+  assert.equal(client.config.token, "bootstrap-token");
+  assert.equal(client.config.nodeId, "macsp");
 });
 
-test("Lumio registers only its interaction adapter, not a generic Pi executor", () => {
-  const previous = process.env.LUMIO_AGENT_MODE;
-  process.env.LUMIO_AGENT_MODE = "background";
-  try {
-    assert.equal(generateAgentName(config), "Lumio background pi on macsp");
-    const registration = buildRunnerRegistration(
-      config,
-      "macsp.lumio.nightly",
-      generateAgentName(config),
-      ["bilibili-summary-v4"],
-      "nightly",
-    );
-    assert.equal(registration.node.node_id, "macsp");
-    assert.equal(registration.executors[0]?.name, "lumio-interactive");
-    assert.deepEqual(registration.available_grants, []);
-    assert.equal(registration.metadata.runner_mode, "background");
-    assert.deepEqual(registration.legacy_capabilities, ["bilibili-summary-v4"]);
-  } finally {
-    if (previous === undefined) delete process.env.LUMIO_AGENT_MODE;
-    else process.env.LUMIO_AGENT_MODE = previous;
-  }
-});
-
-test("Lumio refuses an Atlas server that does not acknowledge runner v1", async () => {
+test("health returns status when Atlas is reachable", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => Response.json({
-    runner_id: "macsp.lumio.test",
-    scoped_token: "at2_secret",
-    protocol_version: "atlas-agent-v3",
-  });
+  globalThis.fetch = async () => Response.json({ status: "ok", version: "0.1.0" });
 
   try {
-    const client = createClient(config, "test-session");
-    const result = await client.register(
-      buildRunnerRegistration(config, client.agentId, "test", []),
-    );
-    assert.equal(result.ok, false);
-    assert.equal(client.scopedToken, null);
-    if (!result.ok) assert.match(result.error, /protocol mismatch/);
+    const client = createClient(config);
+    const result = await client.health();
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.data.status, "ok");
+      assert.equal(result.data.version, "0.1.0");
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("Lumio accepts runner v1 registration and stores only the scoped work credential", async () => {
+test("status returns disconnected when health fails", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => Response.json({
-    runner_id: "macsp.lumio.testsession",
-    scoped_token: "at2_scoped-secret",
-    protocol_version: "atlas-runner-v1",
-  });
+  globalThis.fetch = async () => {
+    throw new Error("connect ECONNREFUSED");
+  };
 
   try {
-    const client = createClient(config, "test-session");
-    const result = await client.register(
-      buildRunnerRegistration(config, client.agentId, "test", ["bilibili-summary-v4"]),
-    );
-    assert.equal(result.ok, true);
-    assert.equal(client.agentId, "macsp.lumio.testsession");
-    assert.equal(client.scopedToken, "at2_scoped-secret");
+    const client = createClient(config);
+    const status = await client.status();
+    assert.equal(status.kind, "disconnected");
+    if (status.kind === "disconnected") {
+      assert.match(status.reason, /ECONNREFUSED/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("status returns connected with health info", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ status: "ok", version: "0.1.0" });
+
+  try {
+    const client = createClient(config);
+    const status = await client.status();
+    assert.equal(status.kind, "connected");
+    if (status.kind === "connected") {
+      assert.equal(status.health.status, "ok");
+      assert.equal(status.health.version, "0.1.0");
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -99,7 +84,7 @@ test("Atlas validation errors preserve the response body and are not retried", a
   };
 
   try {
-    const client = createClient(config, "test-session");
+    const client = createClient(config);
     const result = await client.controlPost("/api/sources", { kind: "web_page" });
     assert.equal(result.ok, false);
     assert.equal(calls, 1);

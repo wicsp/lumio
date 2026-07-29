@@ -87,10 +87,15 @@ test("reconciliation projects active summaries, removes dismissed cards, and bec
       if (path === "/api/knowledge-refs?limit=500") {
         return { ok: true as const, data: [] as T };
       }
-      if (path === `/api/resources/${active.resource_id}/bundle`) {
+      if (path === `/api/resources/${active.resource_id}/content`) {
         return {
           ok: true as const,
-          data: { resource: active, source, artifact: artifactRef } as T,
+          data: {
+            resource: active,
+            source,
+            artifact: artifactRef,
+            content: "# Reconciled Resource\n",
+          } as T,
         };
       }
       return { ok: false as const, status: 404, error: `Unexpected path: ${path}` };
