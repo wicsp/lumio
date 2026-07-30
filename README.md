@@ -99,7 +99,6 @@ Lumio 不上报这些 grants。Atlas attempt 和 Runner manifest 必须同时允
 - `/atlas:reconcile`：手动执行同一套全量 reconciliation，并报告 created、updated、removed、unchanged 和 failed 数量。
 - Resource 阅读与评论现在直接在 Atlas Console 完成；Comment 与审阅状态以 Atlas 为准，不要求安装或打开 Obsidian。
 - Vortex reconciliation、digest 与 audit 是可选知识库投影，只在配置 `ATLAS_OBSIDIAN_VAULT` 时运行，不参与任务完成条件。
-- Atlas Console 的 `写评论` 直接通过 Obsidian URI 本地创建并打开草稿；`完成评论` 排队 `vortex-comment-sync-v1`，由在线 Lumio 读取本地草稿并同步到 Atlas。
 - `/atlas:dismiss <resource_id>`：将没有 KnowledgeRef 的 Resource 标为 `dismissed`，并只删除可重建的 Resource Card。
 - `/atlas:restore <resource_id>`：将 dismissed Resource 恢复为 `pending`，并重建 Resource Card。
 - `/atlas:digest` 与 `/atlas:audit`：生成可重建的每日审阅简报和每周完整性检查；成功连接 Atlas 时会自动刷新当天简报，周日同时刷新 Audit。
